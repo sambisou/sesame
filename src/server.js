@@ -9,12 +9,21 @@ import { isLocked } from "./policy.js";
 import { login, openLogin, waitCode, requestSite } from "./login.js";
 
 const UNKNOWN_HINT = "Ce site n'est pas dans Sésame. N'envoie pas l'utilisateur dans un terminal : appelle sesame_request_site(site, url, reason) — une fenêtre Sésame s'ouvre sur son Mac pour qu'il saisisse ses identifiants, puis rappelle sesame_login.";
+/** Dernier filet : aucun message d'erreur ne doit jamais transporter une ligne de commande ou un JSON de secret. */
+export function scrub(msg) {
+  let m = String(msg || "erreur inconnue").split("\n")[0];
+  if (/\bsecurity\b.*\s-w\b|"password"\s*:|Command failed/i.test(m)) m = "opération Trousseau échouée (détail masqué)";
+  return m.slice(0, 300);
+}
 async function guarded(fn) {
-  try { return await fn(); }
-  catch (e) {
-    const msg = String(e.message || e);
+  try {
+    const r = await fn();
+    if (r && typeof r.message === "string") r.message = scrub(r.message);
+    return r;
+  } catch (e) {
+    const msg = scrub(e.message || e);
     if (/Site inconnu/.test(msg)) return { ok: false, message: msg, hint: UNKNOWN_HINT };
-    return { ok: false, message: msg.split("\n")[0].slice(0, 300) };
+    return { ok: false, message: msg };
   }
 }
 
@@ -24,7 +33,7 @@ const text = obj => ({ content: [{ type: "text", text: typeof obj === "string" ?
 
 /** @param {string} [caller] nom de l'appelant journalisé (stdio : argument de ligne de commande ; HTTP : en-tête X-Sesame-Caller) */
 export function buildServer(caller = CALLER) {
-  const server = new McpServer({ name: "sesame", version: "0.2.0" });
+  const server = new McpServer({ name: "sesame", version: "0.3.0" });
 
   server.tool(
     "sesame_list_sites",
@@ -46,14 +55,14 @@ export function buildServer(caller = CALLER) {
     {
       site: z.string().describe("Nom du site tel que listé par sesame_list_sites (ex. « edf »)"),
       reason: z.string().max(200).optional().describe("Pourquoi tu as besoin de te connecter (affiché à l'utilisateur)"),
-      submit: z.boolean().optional().default(true).describe("Soumettre le formulaire après remplissage (défaut true)"),
       openIfMissing: z.boolean().optional().default(true).describe("Ouvrir la page de connexion si aucun onglet du site n'est ouvert"),
       waitForCode: z.boolean().optional().default(true).describe("Si le site demande un code (2e facteur), attendre que l'utilisateur le saisisse avant de répondre (défaut true)"),
       codeTimeoutSec: z.number().int().min(10).max(900).optional().default(180).describe("Délai maximal d'attente du code, en secondes (défaut 180)"),
     },
-    async ({ site, reason, submit, openIfMissing, waitForCode, codeTimeoutSec }) =>
+    async ({ site, reason, openIfMissing, waitForCode, codeTimeoutSec }) =>
       text(await guarded(async () => {
-        const r = await login({ site, reason, submit, openIfMissing, waitForCode, codeTimeoutSec, caller });
+        // Toujours soumettre : un formulaire laissé rempli sans soumission exposerait le mot de passe dans la page.
+        const r = await login({ site, reason, submit: true, openIfMissing, waitForCode, codeTimeoutSec, caller });
         if (!r.ok && /Aucun identifiant enregistré/.test(r.message || "")) r.hint = UNKNOWN_HINT;
         return r;
       }))

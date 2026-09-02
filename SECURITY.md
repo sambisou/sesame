@@ -14,7 +14,13 @@ Sésame handles credentials. Here is what it guarantees, what it does not, and h
 - Form filling happens in **a Chrome with a dedicated profile**, driven locally (DevTools port 9222 on 127.0.0.1). Nothing goes through a third-party server.
 - The optional HTTP transport (`sesame serve`) listens on 127.0.0.1 only and requires a local random token; requests without it are refused and logged.
 
+## Keychain items have no trusted application
+
+Since 0.3.0, Sésame creates its Keychain items with **no trusted application**. Reading a password, by Sésame or by any other process on your Mac, therefore triggers the system Keychain dialog. Answer **Allow** each time. Never click **Always Allow**: it would register `/usr/bin/security` as trusted and make every future read silent, for any local process. Sites registered before 0.3.0 still carry a trusted application: `sesame doctor` flags them, re-register them once with `sesame add <site>` or through the Sésame window.
+
 ## What Sésame does not do
+
+- **An agent that runs JavaScript in the Sésame Chrome can observe what Sésame types.** The Claude in Chrome extension, when installed in that profile, gives the model such access. The guarantee "no tool returns a secret" covers Sésame's MCP tools, not the browser DOM. Sésame mitigates this (always submits, clears the field if the login fails, never leaves an unsent form) but cannot prevent a page-level observer. Install Claude in Chrome in the Sésame profile only if you accept this.
 
 - It does not solve captchas and does not bypass the second factor: the SMS, e-mail or app code is typed by the person, Sésame waits.
 - It does not protect against an already compromised Mac: whoever controls your macOS session also controls the Keychain and the Sésame Chrome.

@@ -25,7 +25,9 @@ Le principe : Claude ne demande pas *« donne-moi le mot de passe EDF »*, il de
 | Outil MCP | Ce qu'il fait | Ce qu'il renvoie |
 |---|---|---|
 | `sesame_list_sites` | liste les sites connus | noms, domaines, politiques — **pas de secret** |
-| `sesame_login` | remplit (et soumet) le formulaire de connexion dans Chrome | `ok / refusé / échec` + étapes + URL |
+| `sesame_login` | remplit et soumet le formulaire de connexion dans Chrome, attend un code de 2e facteur si le site en demande un | `ok / refusé / échec` + étapes + URL |
+| `sesame_wait_code` | reprend l'attente d'un code de 2e facteur que tu tapes toi-même | `ok / échec` |
+| `sesame_request_site` | quand un site n'est pas encore enregistré : ouvre des fenêtres Sésame sur le Mac pour que **toi** tu saisisses identifiant et mot de passe (directement dans le Trousseau) | `enregistré / refusé / déjà connu` — jamais les valeurs |
 | `sesame_open_login` | ouvre la page de connexion d'un site | URL |
 | `sesame_journal` | lit le journal d'accès | événements |
 
@@ -105,7 +107,7 @@ Claude appelle `sesame_list_sites` pour trouver le nom `edf`, puis `sesame_login
 
 Pour que Claude s'en souvienne, tu peux ajouter dans tes instructions (Cowork / CLAUDE.md) :
 
-> Pour tout site nécessitant une connexion, ne me demande jamais mes identifiants : utilise les outils `sesame_*` (d'abord `sesame_list_sites`, puis `sesame_login` avec un motif clair). Si le site n'est pas dans Sésame, dis-le-moi et je l'ajouterai avec `sesame add`.
+> Pour tout site nécessitant une connexion, ne me demande jamais mes identifiants : utilise les outils `sesame_*` (d'abord `sesame_list_sites`, puis `sesame_login` avec un motif clair). Si le site n'est pas dans Sésame, appelle `sesame_request_site` pour que je saisisse mes identifiants dans la fenêtre Sésame — ne m'envoie jamais dans un terminal.
 
 ## Le 2e facteur (code par SMS, e-mail ou application)
 
@@ -139,7 +141,8 @@ Voir toutes les configurations d'un coup : `sesame install print`.
 - **Captcha** : Sésame ne le résout pas ; il le signale (`hint`) et c'est à toi de le faire dans le Chrome.
 - **Formulaires exotiques** (champs sans `type`, Shadow DOM) : indique les sélecteurs avec `--user-sel / --pass-sel / --submit-sel`. Pour les trouver : clic droit sur le champ → Inspecter.
 - **macOS uniquement** (Trousseau + boîtes de dialogue `osascript`). Node ≥ 20.
-- Le Trousseau peut demander une fois ton mot de passe de session pour autoriser `security` à lire l'élément : réponds « Toujours autoriser ».
+- Chaque connexion déclenche la boîte de dialogue du Trousseau macOS avant la lecture du mot de passe : réponds **Autoriser**. Ne clique jamais **Toujours autoriser** (tout processus local pourrait alors lire l'élément en silence, voir SECURITY.fr.md).
+- Un agent qui exécute du JavaScript dans le Chrome Sésame (Claude in Chrome installé dans ce profil) peut observer ce que Sésame tape dans la page. Sésame soumet toujours et vide le champ en cas d'échec, mais ne peut pas cacher le DOM à une extension que tu as installée. Voir SECURITY.fr.md.
 
 ## Dépannage
 

@@ -1,9 +1,9 @@
 // Orchestration d'une connexion : politique → validation → Chrome → remplissage → journal.
-import { getSite, loadSites, saveSites, normalizeName, siteDomainFor } from "./config.js";
+import { getSite, loadSites, saveSites, normalizeName, siteDomainFor, assertLoginUrl } from "./config.js";
 import { getSecret, hasSecret, setSecret, keychainAvailable } from "./keychain.js";
 import { logEvent } from "./journal.js";
 import { isLocked, askHuman, askText, notify, notifyWaitingCode } from "./policy.js";
-import { connect, findPage, openPage, fillLogin, detectSecondFactor, waitForSecondFactor } from "./browser.js";
+import { connect, findPage, openPage, fillLogin, detectSecondFactor, waitForSecondFactor, publicUrl } from "./browser.js";
 
 /**
  * @param {object} o
@@ -81,9 +81,10 @@ export async function login({ site: siteName, submit = true, openIfMissing = tru
       logEvent({ ...base, result: "échec", detail: res.reason });
       return { ok: false, message: res.reason, steps: res.steps, url: res.url, secondFactor: res.secondFactor, opened };
     }
-    logEvent({ ...base, result: "réussi", detail: `${res.steps.join(", ")} → ${res.url}` });
-    notify("Sésame", `Connexion à ${site.key} remplie pour Claude (${caller}).`);
-    touchLastUsed(site.key);
+    const certain = !res.hint && !res.secondFactor?.pending;
+    logEvent({ ...base, result: certain ? "réussi" : "incertain", detail: `${res.steps.join(", ")}${res.hint ? " — " + res.hint : ""} → ${res.url}` });
+    notify("Sésame", certain ? `Connexion à ${site.key} remplie pour Claude (${caller}).` : `Connexion à ${site.key} : à vérifier (${res.hint || "code attendu"}).`);
+    if (certain) touchLastUsed(site.key);
     return { ok: true, message: res.secondFactor?.pending ? `Identifiants remplis sur « ${site.key} », le site attend un code de l'utilisateur.` : `Identifiants remplis sur « ${site.key} ».`, steps: res.steps, url: res.url, title: res.title, secondFactor: res.secondFactor, hint: res.hint, opened };
   } catch (e) {
     const msg = sanitize(e.message);
@@ -104,8 +105,8 @@ export async function openLogin({ site: siteName, caller = "mcp" }) {
     const existing = await findPage(browser, site);
     const page = existing || await openPage(browser, url);
     if (existing) await page.bringToFront().catch(() => {});
-    logEvent({ site: site.key, action: "open_login", caller, result: "ok", detail: page.url() });
-    return { ok: true, url: page.url(), reused: !!existing };
+    logEvent({ site: site.key, action: "open_login", caller, result: "ok", detail: publicUrl(page.url()) });
+    return { ok: true, url: publicUrl(page.url()), reused: !!existing };
   } catch (e) {
     const msg = sanitize(e.message);
     logEvent({ site: site.key, action: "open_login", caller, result: "erreur", detail: msg });
@@ -131,21 +132,35 @@ export async function waitCode({ site: siteName, timeoutSec = 180, caller = "mcp
       return { ok: false, message: `Aucun onglet Chrome ouvert sur ${site.domain}.` };
     }
     await page.bringToFront().catch(() => {});
-    const sf = await detectSecondFactor(page, site);
+    const deadline = Date.now() + timeoutSec * 1000;
+    let sf = await detectSecondFactor(page, site);
+    // La page parle d'un code sans champ (choix de méthode, validation sur téléphone) : on laisse à l'utilisateur
+    // le temps de faire apparaître le champ, sans le compter comme « code accepté ».
+    while (sf && sf.kind === "texte-seul" && Date.now() < deadline) {
+      await page.waitForTimeout(1000);
+      if (page.isClosed()) break;
+      sf = await detectSecondFactor(page, site);
+    }
     if (!sf) {
+      const stillPassword = !page.isClosed() && /password/i.test(await page.content().catch(() => "")) ? "" : "";
       logEvent({ ...base, result: "ok", detail: "aucun code demandé sur cet onglet" });
-      return { ok: true, message: "Aucun code demandé sur cet onglet (la connexion est peut-être déjà passée).", url: page.url(), title: await page.title().catch(() => "") };
+      return { ok: true, message: `Aucun code demandé sur cet onglet (la connexion est peut-être déjà passée).${stillPassword}`, url: publicUrl(page.url()), title: await page.title().catch(() => "") };
+    }
+    if (sf.kind === "texte-seul") {
+      logEvent({ ...base, result: "en attente", detail: `page évoquant un code sans champ (${sf.detail}) après ${timeoutSec} s` });
+      return { ok: false, message: `La page évoque un 2e facteur sans champ de saisie (${sf.detail}) : l'utilisateur doit d'abord choisir la méthode ou valider sur son téléphone. Rappelle sesame_wait_code ensuite.`, secondFactor: { pending: true, ...sf } };
     }
     logEvent({ ...base, result: "attente", detail: `reprise de l'attente (${sf.detail})` });
-    notifyWaitingCode(site.key, { detail: sf.kind === "champ" ? "" : sf.detail, timeoutSec });
-    const w = await waitForSecondFactor(page, site, { timeoutSec });
+    notifyWaitingCode(site.key, { detail: sf.detail, timeoutSec });
+    const w = await waitForSecondFactor(page, site, { timeoutSec: Math.max(10, Math.round((deadline - Date.now()) / 1000)) });
     if (!w.done) {
-      logEvent({ ...base, result: "en attente", detail: `code non saisi après ${timeoutSec} s` });
-      return { ok: false, message: `L'utilisateur n'a pas saisi le code dans le délai (${timeoutSec} s). Rappelle sesame_wait_code quand il est prêt.`, secondFactor: { pending: true, ...sf } };
+      const pending = w.reason === "délai dépassé";
+      logEvent({ ...base, result: pending ? "en attente" : "échec", detail: pending ? `code non saisi après ${timeoutSec} s` : w.reason });
+      return { ok: false, message: pending ? `L'utilisateur n'a pas saisi le code dans le délai (${timeoutSec} s). Rappelle sesame_wait_code quand il est prêt.` : `Attente du code interrompue : ${w.reason}.`, secondFactor: { pending, ...sf } };
     }
-    logEvent({ ...base, result: "réussi", detail: `code saisi par l'utilisateur (${w.elapsedSec} s) → ${page.url()}` });
+    logEvent({ ...base, result: "réussi", detail: `code saisi par l'utilisateur (${w.elapsedSec} s) → ${publicUrl(page.url())}` });
     touchLastUsed(site.key);
-    return { ok: true, message: `Code saisi par l'utilisateur, connexion poursuivie sur « ${site.key} ».`, url: page.url(), title: await page.title().catch(() => ""), secondFactor: { pending: false, ...sf } };
+    return { ok: true, message: `Code saisi par l'utilisateur, connexion poursuivie sur « ${site.key} ».`, url: publicUrl(page.url()), title: await page.title().catch(() => ""), secondFactor: { pending: false, ...sf } };
   } catch (e) {
     const msg = sanitize(e.message);
     logEvent({ ...base, result: "erreur", detail: msg });
@@ -170,9 +185,10 @@ export async function waitCode({ site: siteName, timeoutSec = 180, caller = "mcp
  */
 export async function requestSite({ site: siteName, url, reason = "", note, caller = "mcp", ui } = {}) {
   const key = normalizeName(siteName || "");
-  const domain = siteDomainFor(url || "");
   const base = { site: key || undefined, action: "request_site", caller };
   if (!key) return { ok: false, message: "Nom de site manquant (ex. « infomaniak »)." };
+  try { assertLoginUrl(url); } catch (e) { return { ok: false, message: e.message }; }
+  const domain = siteDomainFor(url);
   if (!domain) return { ok: false, message: `URL de connexion invalide : ${url || "(vide)"}.` };
   if (isLocked()) {
     logEvent({ ...base, result: "refusé", detail: "verrou global actif" });
@@ -212,8 +228,14 @@ export async function requestSite({ site: siteName, url, reason = "", note, call
   }
   if (!password) { logEvent({ ...base, result: "échec", detail: "mot de passe vide ou non confirmé" }); return { ok: false, message: "Mot de passe non confirmé après trois essais." }; }
 
-  setSecret(key, { username: username.trim(), password });
-  password = null;
+  try {
+    setSecret(key, { username: username.trim(), password });
+  } catch (e) {
+    logEvent({ ...base, result: "échec", detail: `écriture Trousseau : ${sanitize(e.message)}` });
+    return { ok: false, message: "Impossible d'écrire dans le Trousseau macOS (trousseau verrouillé ? demande refusée ?). Réessaie après l'avoir déverrouillé." };
+  } finally {
+    password = null;
+  }
   sites[key] = {
     domain, loginUrl: url, policy: existing?.policy || "ask",
     note: note || existing?.note, selectors: existing?.selectors || {},
@@ -232,7 +254,9 @@ function touchLastUsed(key) {
   } catch {}
 }
 
-/** Garde-fou : ne jamais laisser une valeur de mot de passe fuiter dans un message d'erreur. */
+/** Garde-fou : ne jamais laisser une valeur de mot de passe ni une ligne de commande fuiter dans un message. */
 function sanitize(msg) {
-  return String(msg || "erreur inconnue").split("\n")[0].slice(0, 300);
+  let m = String(msg || "erreur inconnue").split("\n")[0];
+  if (/\bsecurity\b.*\s-w\b|"password"\s*:|Command failed/i.test(m)) m = "opération Trousseau échouée (détail masqué)";
+  return m.slice(0, 300);
 }

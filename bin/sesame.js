@@ -8,9 +8,9 @@ import readline from "node:readline";
 import { fileURLToPath } from "node:url";
 import {
   HOME, SITES_FILE, JOURNAL_FILE, CHROME_PROFILE, CDP_URL, POLICIES,
-  loadSites, saveSites, normalizeName, siteDomainFor, ensureHome,
+  loadSites, saveSites, normalizeName, siteDomainFor, assertLoginUrl, ensureHome,
 } from "../src/config.js";
-import { setSecret, deleteSecret, hasSecret, keychainAvailable } from "../src/keychain.js";
+import { setSecret, deleteSecret, hasSecret, hasTrustedApp, keychainAvailable } from "../src/keychain.js";
 import { readJournal, formatEvent, logEvent } from "../src/journal.js";
 import { lock, unlock, isLocked, assertPolicy } from "../src/policy.js";
 
@@ -107,6 +107,7 @@ async function add() {
   const sites = loadSites();
   const existing = sites[key] || {};
   const url = opt("--url") || existing.loginUrl || (await prompt(`URL de la page de connexion de « ${key} » : `)).trim();
+  assertLoginUrl(url);
   const domain = siteDomainFor(url);
   if (!domain) throw new Error(`URL invalide : ${url}`);
   const policyV = opt("--policy") || existing.policy || "ask";
@@ -315,7 +316,11 @@ async function doctor() {
   const sites = loadSites();
   const n = Object.keys(sites).length;
   ok(n > 0, `${n} site(s) enregistré(s)`);
-  if (keychainAvailable()) for (const k of Object.keys(sites)) ok(hasSecret(k), `Trousseau : secret présent pour « ${k} »`);
+  if (keychainAvailable()) for (const k of Object.keys(sites)) {
+    ok(hasSecret(k), `Trousseau : secret présent pour « ${k} »`);
+    const trusted = hasTrustedApp(k);
+    if (trusted === true) console.log(`⚠️  « ${k} » : l'élément du Trousseau a une application de confiance (créé avant 0.3, ou « Toujours autoriser » cliqué) → lecture silencieuse possible par tout processus. Réenregistre-le : sesame add ${k}`);
+  }
   ok(!isLocked(), isLocked() ? "Verrou global ACTIF" : "Verrou global inactif");
   ok(!!chromeBinary(), "Google Chrome installé");
   try {

@@ -112,7 +112,7 @@ Claude calls `sesame_list_sites` to find the name `edf`, then `sesame_login(site
 
 To make Claude remember, add to your instructions (Cowork / CLAUDE.md):
 
-> For any site that requires a login, never ask me for my credentials: use the `sesame_*` tools (first `sesame_list_sites`, then `sesame_login` with a clear reason). If the site is not in Sésame, tell me and I will add it with `sesame add`.
+> For any site that requires a login, never ask me for my credentials: use the `sesame_*` tools (first `sesame_list_sites`, then `sesame_login` with a clear reason). If the site is not in Sésame, call `sesame_request_site` so that I can type my credentials in the Sésame window — never send me to a terminal.
 
 ## Second factor (code by SMS, e-mail or authenticator app)
 
@@ -146,7 +146,8 @@ Print every configuration at once: `sesame install print`.
 - **Captcha**: Sésame does not solve it; it flags it (`hint`) and you do it in Chrome.
 - **Unusual forms** (fields without `type`, Shadow DOM): give the selectors with `--user-sel / --pass-sel / --submit-sel / --code-sel`. To find them: right-click the field → Inspect.
 - **macOS only** (Keychain + `osascript` dialogs). Node 20 or later.
-- The Keychain may ask once for your session password so that `security` can read the item: answer "Always Allow".
+- Each login triggers the macOS Keychain dialog before the password is read: answer **Allow**. Never click **Always Allow** (it would let any local process read the item silently, see SECURITY.md).
+- An agent running JavaScript in the Sésame Chrome (Claude in Chrome installed there) can observe what Sésame types into the page. Sésame always submits and clears the field on failure, but cannot hide the DOM from an extension you installed. See SECURITY.md.
 
 ## Troubleshooting
 

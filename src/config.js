@@ -53,6 +53,17 @@ export function hostnameOf(url) {
 // Sous-domaines typiques d'une page de connexion : le site « vit » un cran au-dessus
 // (login.infomaniak.com → infomaniak.com), sinon l'onglet après connexion ne serait plus reconnu.
 const AUTH_LABELS = new Set(["login", "auth", "accounts", "account", "sso", "id", "idp", "signin", "sign-in", "connect", "oauth", "secure", "my", "mon", "espace-client", "espaceclient", "identity", "authentification", "authentication", "portal", "compte", "moncompte", "customer", "client"]);
+/** Une page de connexion doit être en HTTPS (127.0.0.1 / localhost tolérés pour les bancs d'essai). Lève une erreur sinon. */
+export function assertLoginUrl(url) {
+  let u;
+  try { u = new URL(String(url)); } catch { throw new Error(`URL de connexion invalide : ${url || "(vide)"}`); }
+  const local = ["127.0.0.1", "localhost", "::1"].includes(u.hostname);
+  if (u.protocol !== "https:" && !(local && u.protocol === "http:")) {
+    throw new Error("La page de connexion doit être en https:// (un identifiant ne se tape jamais sur une page non chiffrée).");
+  }
+  return u;
+}
+
 export function siteDomainFor(url) {
   const h = hostnameOf(url);
   if (!h) return null;

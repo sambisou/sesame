@@ -11,7 +11,14 @@ Sésame manipule des identifiants. Voici ce qu'il garantit, ce qu'il ne garantit
 - Le journal (`~/.sesame/journal.jsonl`) est en ajout seul : le serveur MCP ne dispose d'aucun outil pour l'effacer.
 - Le remplissage se fait dans **un Chrome à profil dédié**, piloté localement (port DevTools 9222 sur 127.0.0.1). Rien ne transite par un serveur tiers.
 
+## Les éléments du Trousseau n'ont aucune application de confiance
+
+Depuis la 0.3.0, Sésame crée ses éléments du Trousseau **sans application de confiance**. Toute lecture d'un mot de passe, par Sésame ou par n'importe quel autre processus du Mac, déclenche donc la boîte de dialogue du Trousseau. Réponds **Autoriser** à chaque fois. Ne clique jamais **Toujours autoriser** : cela inscrirait `/usr/bin/security` comme application de confiance et rendrait toutes les lectures silencieuses, pour n'importe quel processus local. Les sites enregistrés avant la 0.3.0 gardent une application de confiance : `sesame doctor` les signale, réenregistre-les une fois avec `sesame add <site>` ou via la fenêtre Sésame.
+
 ## Ce que Sésame ne fait pas
+
+- **Un agent qui exécute du JavaScript dans le Chrome Sésame peut observer ce que Sésame tape.** L'extension Claude in Chrome, installée dans ce profil, donne cet accès au modèle. La garantie « aucun outil ne renvoie un secret » couvre les outils MCP de Sésame, pas le DOM du navigateur. Sésame limite le risque (soumet toujours, vide le champ si la connexion échoue, ne laisse jamais un formulaire rempli non envoyé) mais ne peut pas empêcher un observateur dans la page. N'installe Claude in Chrome dans le profil Sésame que si tu acceptes cela.
+- Si tu exposes `sesame serve` par un tunnel (pour un client distant comme ChatGPT), quiconque connaît l'URL et le jeton peut demander des connexions. Elles restent soumises à ton dialogue et journalisées, et aucun secret n'est renvoyé, mais c'est un point d'entrée que tu as choisi d'ouvrir. Renouvelle le jeton avec `sesame token --rotate`.
 
 - Il ne résout pas les captchas, ne contourne pas le deuxième facteur : le code SMS, e-mail ou application est saisi par la personne, Sésame attend.
 - Il ne protège pas contre un Mac déjà compromis : quiconque contrôle votre session macOS contrôle aussi le Trousseau et le Chrome Sésame.

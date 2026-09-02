@@ -39,9 +39,11 @@ function safeEqual(a, b) {
   return ba.length === bb.length && crypto.timingSafeEqual(ba, bb);
 }
 
+/** Nom d'appelant journalisé et affiché : toujours préfixé « http: » pour qu'un client distant ne puisse pas se faire passer pour Cowork ou Claude Code. */
 function callerFrom(req) {
-  const raw = String(req.headers["x-sesame-caller"] || "http");
-  return raw.replace(/[^a-z0-9._-]/gi, "").slice(0, 32) || "http";
+  const raw = String(req.headers["x-sesame-caller"] || "");
+  const name = raw.replace(/[^a-z0-9._-]/gi, "").slice(0, 24);
+  return name ? `http:${name}` : "http";
 }
 
 /**

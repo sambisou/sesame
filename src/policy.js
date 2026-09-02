@@ -1,0 +1,51 @@
+// Politique d'accès par site + verrou global + validation humaine (boîte de dialogue macOS).
+import fs from "node:fs";
+import { execFile } from "node:child_process";
+import { LOCK_FILE, POLICIES, ensureHome } from "./config.js";
+
+export function isLocked() { return fs.existsSync(LOCK_FILE); }
+export function lock() { ensureHome(); fs.writeFileSync(LOCK_FILE, new Date().toISOString() + "\n"); }
+export function unlock() { if (isLocked()) fs.unlinkSync(LOCK_FILE); }
+
+export function assertPolicy(p) {
+  if (!POLICIES.includes(p)) throw new Error(`Politique invalide « ${p} » (attendu : ${POLICIES.join(" | ")})`);
+}
+
+/**
+ * Affiche une boîte de dialogue macOS et attend la réponse de l'utilisateur.
+ * Renvoie true si « Autoriser », false sinon (Refuser, fermeture, ou délai dépassé).
+ */
+export function askHuman({ title, message, timeoutSec = 90 }) {
+  if (process.platform !== "darwin") return Promise.resolve(false);
+  const esc = s => String(s).replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+  const script =
+    `display dialog "${esc(message)}" with title "${esc(title)}" ` +
+    `buttons {"Refuser", "Autoriser"} default button "Refuser" cancel button "Refuser" ` +
+    `with icon caution giving up after ${timeoutSec}`;
+  return new Promise(resolve => {
+    execFile("/usr/bin/osascript", ["-e", script], { timeout: (timeoutSec + 5) * 1000 }, (err, stdout) => {
+      if (err) return resolve(false); // bouton Refuser → osascript renvoie une erreur "User canceled"
+      const out = String(stdout);
+      resolve(/button returned:Autoriser/.test(out) && !/gave up:true/.test(out));
+    });
+  });
+}
+
+/**
+ * Prévient l'utilisateur qu'un site demande un code (2e facteur) et que Sésame attend.
+ * Non bloquant : l'utilisateur tape le code dans le Chrome Sésame, la détection se fait dans la page.
+ */
+export function notifyWaitingCode(siteKey, { detail = "", timeoutSec = 180 } = {}) {
+  const min = Math.max(1, Math.round(timeoutSec / 60));
+  notify(
+    "Sésame — code demandé",
+    `${siteKey} demande un code de vérification${detail ? " (" + detail + ")" : ""}. Tapez le code reçu par e-mail, SMS ou application dans le Chrome Sésame. J'attends jusqu'à ${min} min.`
+  );
+}
+
+/** Notification discrète (pas bloquante). */
+export function notify(title, message) {
+  if (process.platform !== "darwin") return;
+  const esc = s => String(s).replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+  execFile("/usr/bin/osascript", ["-e", `display notification "${esc(message)}" with title "${esc(title)}"`], () => {});
+}

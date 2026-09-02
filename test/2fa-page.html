@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="fr"><head><meta charset="utf-8"><title>Banc d'essai Sésame</title>
+<style>body{font:16px -apple-system,Helvetica,sans-serif;padding:40px;max-width:420px}input{display:block;margin:8px 0 16px;padding:8px;width:100%}button{padding:8px 16px}</style>
+</head><body>
+<h1>Banc d'essai</h1>
+<div id="s1"><label>E-mail <input id="email" type="email" autocomplete="username"></label><button id="next" type="button">Suivant</button></div>
+<div id="s2" hidden><label>Mot de passe <input id="pwd" type="password" autocomplete="current-password"></label><button id="go" type="button">Se connecter</button></div>
+<div id="s3" hidden><p>Nous vous avons envoyé un code de vérification par e-mail.</p><label>Code <input id="otp" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="6"></label><button id="ok" type="button">Valider</button><p id="err" hidden>Code incorrect.</p></div>
+<div id="s4" hidden><h2>Bienvenue, vous êtes connecté.</h2></div>
+<script>
+const q = new URLSearchParams(location.search); const no2fa = q.get("no2fa") === "1";
+next.onclick = () => { if (!email.value) return; s1.hidden = true; s2.hidden = false; };
+go.onclick = () => { if (pwd.value !== "bonmotdepasse") return; s2.hidden = true; if (no2fa) { s4.hidden = false; } else { s3.hidden = false; } };
+ok.onclick = () => { if (otp.value === "424242") { s3.hidden = true; s4.hidden = false; } else { err.hidden = false; } };
+</script>
+</body></html>

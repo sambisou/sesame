@@ -1,0 +1,22 @@
+{
+  "name": "sesame-mcp",
+  "version": "0.1.0",
+  "description": "Sésame — coffre local d'identifiants pour Claude : remplit les formulaires de connexion dans Chrome sans jamais révéler les secrets à l'IA. Serveur MCP + CLI.",
+  "type": "module",
+  "private": true,
+  "bin": {
+    "sesame": "./bin/sesame.js",
+    "sesame-mcp": "./bin/sesame-mcp.js"
+  },
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "start": "node bin/sesame-mcp.js",
+    "check": "node --check bin/sesame.js && node --check bin/sesame-mcp.js && node --check src/*.js && node test/smoke.mjs",
+    "test:live": "node test/2fa-live.mjs"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "playwright-core": "^1.40.0",
+    "zod": "^3.23.0"
+  }
+}

@@ -1,0 +1,59 @@
+// Chemins et fichier de configuration (non secret) : ~/.sesame/sites.json
+import fs from "node:fs";
+import path from "node:path";
+import os from "node:os";
+
+export const HOME = path.join(process.env.SESAME_HOME || path.join(os.homedir(), ".sesame"));
+export const SITES_FILE = path.join(HOME, "sites.json");
+export const JOURNAL_FILE = path.join(HOME, "journal.jsonl");
+export const LOCK_FILE = path.join(HOME, "LOCKED");
+export const CHROME_PROFILE = path.join(HOME, "chrome-profile");
+export const CDP_URL = process.env.SESAME_CDP_URL || "http://127.0.0.1:9222";
+export const KEYCHAIN_SERVICE = process.env.SESAME_KEYCHAIN_SERVICE || "sesame";
+
+export const POLICIES = ["always", "ask", "revoked"];
+
+export function ensureHome() {
+  fs.mkdirSync(HOME, { recursive: true, mode: 0o700 });
+}
+
+export function loadSites() {
+  ensureHome();
+  if (!fs.existsSync(SITES_FILE)) return {};
+  try {
+    return JSON.parse(fs.readFileSync(SITES_FILE, "utf8"));
+  } catch (e) {
+    throw new Error(`sites.json illisible : ${e.message}`);
+  }
+}
+
+export function saveSites(sites) {
+  ensureHome();
+  const tmp = SITES_FILE + ".tmp";
+  fs.writeFileSync(tmp, JSON.stringify(sites, null, 2) + "\n", { mode: 0o600 });
+  fs.renameSync(tmp, SITES_FILE);
+}
+
+export function getSite(name) {
+  const sites = loadSites();
+  const key = normalizeName(name);
+  const site = sites[key];
+  if (!site) throw new Error(`Site inconnu : « ${name} ». Sites connus : ${Object.keys(sites).join(", ") || "(aucun)"}`);
+  return { key, ...site };
+}
+
+export function normalizeName(name) {
+  return String(name).trim().toLowerCase().replace(/[^a-z0-9._-]+/g, "-");
+}
+
+export function hostnameOf(url) {
+  try { return new URL(url).hostname.replace(/^www\./, ""); } catch { return null; }
+}
+
+/** Le site correspond-il à cette URL d'onglet ? (domaine ou sous-domaine) */
+export function siteMatchesUrl(site, url) {
+  const h = hostnameOf(url);
+  if (!h) return false;
+  const domains = [site.domain, ...(site.extraDomains || [])].filter(Boolean);
+  return domains.some(d => h === d || h.endsWith("." + d));
+}

@@ -1,0 +1,15 @@
+# Dépendances et fichiers générés
+node_modules/
+site/dist/
+*.log
+.DS_Store
+
+# Documents internes (comptes, choix d'hébergement) — jamais publiés
+site/propositions-domaine.html
+
+# Aucune donnée locale de Sésame ne vit dans le dépôt (elles sont dans ~/.sesame), mais par sécurité :
+sites.json
+journal.jsonl
+chrome-profile/
+LOCKED
+*.bak-*

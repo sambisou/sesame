@@ -183,7 +183,7 @@ export async function waitCode({ site: siteName, timeoutSec = 180, caller = "mcp
  * @param {string} [o.caller]
  * @param {object} [o.ui]     surcharge des dialogues pour les tests : { confirm, text }
  */
-export async function requestSite({ site: siteName, url, reason = "", note, caller = "mcp", ui } = {}) {
+export async function requestSite({ site: siteName, url, reason = "", note, caller = "mcp", replace = false, ui } = {}) {
   const key = normalizeName(siteName || "");
   const base = { site: key || undefined, action: "request_site", caller };
   if (!key) return { ok: false, message: "Nom de site manquant (ex. « infomaniak »)." };
@@ -198,7 +198,7 @@ export async function requestSite({ site: siteName, url, reason = "", note, call
 
   const sites = loadSites();
   const existing = sites[key];
-  if (existing && hasSecret(key)) {
+  if (existing && hasSecret(key) && !replace) {
     logEvent({ ...base, result: "ok", detail: "déjà enregistré" });
     return { ok: true, alreadyRegistered: true, site: key, domain: existing.domain, policy: existing.policy, message: `« ${key} » est déjà enregistré : appelle sesame_login.` };
   }

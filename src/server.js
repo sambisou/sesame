@@ -76,8 +76,9 @@ export function buildServer(caller = CALLER) {
       url: z.string().url().describe("URL de la page de connexion (ex. https://login.infomaniak.com/)"),
       reason: z.string().max(200).optional().describe("Pourquoi tu as besoin de ce site (affiché à l'utilisateur)"),
       note: z.string().max(120).optional().describe("Mémo utile, ex. « connexion en 2 étapes : e-mail, Continuer, mot de passe »"),
+      replace: z.boolean().optional().default(false).describe("true pour réenregistrer un site déjà connu (mot de passe changé, ou élément du Trousseau à recréer)"),
     },
-    async ({ site, url, reason, note }) => text(await guarded(() => requestSite({ site, url, reason, note, caller })))
+    async ({ site, url, reason, note, replace }) => text(await guarded(() => requestSite({ site, url, reason, note, replace, caller })))
   );
 
   server.tool(

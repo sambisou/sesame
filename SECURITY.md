@@ -1,35 +1,39 @@
-# Sécurité
+# Security
 
-Sésame manipule des identifiants. Voici ce qu'il garantit, ce qu'il ne garantit pas, et comment signaler un problème.
+> 🇫🇷 [Version française](SECURITY.fr.md)
 
-## Ce que Sésame fait
+Sésame handles credentials. Here is what it guarantees, what it does not, and how to report a problem.
 
-- Les identifiants sont stockés **uniquement dans le Trousseau macOS** (service `sesame`, un élément par site), chiffrés par le système. Sésame n'en garde aucune copie : ni fichier, ni cache, ni journal.
-- Le serveur MCP **n'expose aucun outil qui renvoie un secret**. Les seules réponses possibles sont « fait », « refusé », « échec », la liste des sites (noms, domaines, règles) et le journal.
-- Les valeurs des champs ne figurent jamais dans les messages d'erreur ; ils sont tronqués et nettoyés.
-- Par défaut, **chaque accès est validé par une boîte de dialogue** sur le Mac (règle `ask`). Un coupe-circuit global (`sesame lock`) bloque tout.
-- Le journal (`~/.sesame/journal.jsonl`) est en ajout seul : le serveur MCP ne dispose d'aucun outil pour l'effacer.
-- Le remplissage se fait dans **un Chrome à profil dédié**, piloté localement (port DevTools 9222 sur 127.0.0.1). Rien ne transite par un serveur tiers.
+## What Sésame does
 
-## Ce que Sésame ne fait pas
+- Credentials are stored **only in the macOS Keychain** (service `sesame`, one item per site), encrypted by the system. Sésame keeps no copy: no file, no cache, no log.
+- The MCP server **exposes no tool that returns a secret**. The only possible answers are "done", "refused", "failed", the list of sites (names, domains, policies) and the journal.
+- Field values never appear in error messages; they are truncated and sanitized.
+- By default, **every access is approved through a dialog** on the Mac (`ask` policy). A global kill switch (`sesame lock`) blocks everything.
+- The journal (`~/.sesame/journal.jsonl`) is append-only: the MCP server has no tool to erase it.
+- Form filling happens in **a Chrome with a dedicated profile**, driven locally (DevTools port 9222 on 127.0.0.1). Nothing goes through a third-party server.
+- The optional HTTP transport (`sesame serve`) listens on 127.0.0.1 only and requires a local random token; requests without it are refused and logged.
 
-- Il ne résout pas les captchas, ne contourne pas le deuxième facteur : le code SMS, e-mail ou application est saisi par la personne, Sésame attend.
-- Il ne protège pas contre un Mac déjà compromis : quiconque contrôle votre session macOS contrôle aussi le Trousseau et le Chrome Sésame.
-- Le port DevTools 9222 est ouvert en local sur le profil Chrome dédié : tout processus local peut piloter ce Chrome. N'y ouvrez pas de session que vous ne confieriez pas à Sésame.
-- Le modèle d'IA qui appelle Sésame reste un logiciel tiers : il peut demander des connexions inutiles. La règle `ask` et le journal existent pour ça.
-- La détection des formulaires est heuristique : un site inhabituel peut échouer ou remplir un mauvais champ. Vérifiez le journal et le Chrome Sésame en cas de doute.
+## What Sésame does not do
 
-## Ce logiciel est fourni « tel quel »
+- It does not solve captchas and does not bypass the second factor: the SMS, e-mail or app code is typed by the person, Sésame waits.
+- It does not protect against an already compromised Mac: whoever controls your macOS session also controls the Keychain and the Sésame Chrome.
+- DevTools port 9222 is open locally on the dedicated Chrome profile: any local process can drive that Chrome. Do not open sessions there that you would not entrust to Sésame.
+- If you expose `sesame serve` through a tunnel (for a remote client such as ChatGPT), anyone who knows the URL and token can request logins. They will still be gated by your dialog and logged, and no secret is ever returned, but this is an entry point you chose to open. Rotate the token with `sesame token --rotate`.
+- The AI model that calls Sésame remains third-party software: it may request unnecessary logins. The `ask` policy and the journal exist for that.
+- Form detection is heuristic: an unusual site may fail or fill the wrong field. Check the journal and the Sésame Chrome when in doubt.
 
-Sésame est un projet personnel, gratuit, publié sous licence MIT, **sans garantie d'aucune sorte** et sans engagement de support. Vous l'utilisez sous votre seule responsabilité, pour vos propres comptes, dans le respect des conditions d'utilisation des sites concernés. L'auteur ne peut être tenu responsable d'une perte d'accès, d'une fuite d'identifiants ou d'un dommage lié à son usage.
+## This software is provided "as is"
 
-## Signaler une vulnérabilité
+Sésame is a personal, free project released under the MIT license, **without warranty of any kind** and without any support commitment. You use it at your own risk, for your own accounts, in compliance with the terms of service of the sites involved. The author cannot be held liable for loss of access, credential leakage or any damage related to its use.
 
-N'ouvrez pas d'issue publique pour une faille exploitable. Utilisez l'onglet **Security → Report a vulnerability** du dépôt GitHub (signalement privé). Décrivez le scénario, la version, et si possible une reproduction. Une réponse est visée sous 14 jours, sans garantie de délai de correction.
+## Reporting a vulnerability
 
-## Bonnes pratiques pour les utilisateurs
+Do not open a public issue for an exploitable flaw. Use the repository's **Security → Report a vulnerability** tab (private report). Describe the scenario, the version and, if possible, a reproduction. A reply is aimed for within 14 days, with no guaranteed fix timeline.
 
-- Gardez la règle `ask` pour tout site sensible (banque, impôts, e-mail).
-- Passez en `revoked` un site que vous n'utilisez plus ; `sesame remove` supprime aussi le secret du Trousseau.
-- Ne lancez `sesame chrome` que quand vous en avez besoin ; fermez-le ensuite.
-- Relisez `sesame log` de temps en temps.
+## Good practices for users
+
+- Keep the `ask` policy for any sensitive site (bank, taxes, e-mail).
+- Set a site you no longer use to `revoked`; `sesame remove` also deletes the secret from the Keychain.
+- Only run `sesame chrome` when you need it; close it afterwards.
+- Read `sesame log` from time to time.

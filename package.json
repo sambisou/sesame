@@ -12,6 +12,7 @@
   "scripts": {
     "start": "node bin/sesame-mcp.js",
     "serve": "node bin/sesame.js serve",
+    "pack": "rm -f sesame-macos.zip && git archive --format=zip --prefix=sesame/ -o sesame-macos.zip HEAD && ls -la sesame-macos.zip",
     "check": "node --check bin/sesame.js && node --check bin/sesame-mcp.js && node --check src/*.js && node test/smoke.mjs && node test/http.mjs",
     "test:live": "node test/2fa-live.mjs"
   },

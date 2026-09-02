@@ -1,5 +1,5 @@
 // Orchestration d'une connexion : politique → validation → Chrome → remplissage → journal.
-import { getSite, loadSites, saveSites, normalizeName, hostnameOf } from "./config.js";
+import { getSite, loadSites, saveSites, normalizeName, siteDomainFor } from "./config.js";
 import { getSecret, hasSecret, setSecret, keychainAvailable } from "./keychain.js";
 import { logEvent } from "./journal.js";
 import { isLocked, askHuman, askText, notify, notifyWaitingCode } from "./policy.js";
@@ -170,7 +170,7 @@ export async function waitCode({ site: siteName, timeoutSec = 180, caller = "mcp
  */
 export async function requestSite({ site: siteName, url, reason = "", note, caller = "mcp", ui } = {}) {
   const key = normalizeName(siteName || "");
-  const domain = hostnameOf(url || "");
+  const domain = siteDomainFor(url || "");
   const base = { site: key || undefined, action: "request_site", caller };
   if (!key) return { ok: false, message: "Nom de site manquant (ex. « infomaniak »)." };
   if (!domain) return { ok: false, message: `URL de connexion invalide : ${url || "(vide)"}.` };
@@ -187,7 +187,7 @@ export async function requestSite({ site: siteName, url, reason = "", note, call
     return { ok: true, alreadyRegistered: true, site: key, domain: existing.domain, policy: existing.policy, message: `« ${key} » est déjà enregistré : appelle sesame_login.` };
   }
 
-  const confirm = ui?.confirm || (o => askHuman({ ...o, timeoutSec: 180 }));
+  const confirm = ui?.confirm || (o => askHuman({ okLabel: "Enregistrer", cancelLabel: "Plus tard", defaultOk: true, timeoutSec: 300, ...o }));
   const text = ui?.text || askText;
 
   const intro = `Claude (${caller}) a besoin de se connecter à « ${key} » (${domain}).\n\n${reason ? "Motif : " + reason + "\n\n" : ""}Sésame va vous demander votre identifiant puis votre mot de passe pour ce site. Ils seront rangés dans le Trousseau macOS ; Claude ne les verra jamais.\n\nEnregistrer ce site maintenant ?`;

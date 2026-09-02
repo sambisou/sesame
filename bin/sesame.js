@@ -8,7 +8,7 @@ import readline from "node:readline";
 import { fileURLToPath } from "node:url";
 import {
   HOME, SITES_FILE, JOURNAL_FILE, CHROME_PROFILE, CDP_URL, POLICIES,
-  loadSites, saveSites, normalizeName, hostnameOf, ensureHome,
+  loadSites, saveSites, normalizeName, siteDomainFor, ensureHome,
 } from "../src/config.js";
 import { setSecret, deleteSecret, hasSecret, keychainAvailable } from "../src/keychain.js";
 import { readJournal, formatEvent, logEvent } from "../src/journal.js";
@@ -107,7 +107,7 @@ async function add() {
   const sites = loadSites();
   const existing = sites[key] || {};
   const url = opt("--url") || existing.loginUrl || (await prompt(`URL de la page de connexion de « ${key} » : `)).trim();
-  const domain = hostnameOf(url);
+  const domain = siteDomainFor(url);
   if (!domain) throw new Error(`URL invalide : ${url}`);
   const policyV = opt("--policy") || existing.policy || "ask";
   assertPolicy(policyV);

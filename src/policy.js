@@ -15,18 +15,18 @@ export function assertPolicy(p) {
  * Affiche une boîte de dialogue macOS et attend la réponse de l'utilisateur.
  * Renvoie true si « Autoriser », false sinon (Refuser, fermeture, ou délai dépassé).
  */
-export function askHuman({ title, message, timeoutSec = 90 }) {
+export function askHuman({ title, message, timeoutSec = 90, okLabel = "Autoriser", cancelLabel = "Refuser", defaultOk = false }) {
   if (process.platform !== "darwin") return Promise.resolve(false);
   const esc = s => String(s).replace(/\\/g, "\\\\").replace(/"/g, '\\"');
   const script =
     `display dialog "${esc(message)}" with title "${esc(title)}" ` +
-    `buttons {"Refuser", "Autoriser"} default button "Refuser" cancel button "Refuser" ` +
+    `buttons {"${esc(cancelLabel)}", "${esc(okLabel)}"} default button "${esc(defaultOk ? okLabel : cancelLabel)}" cancel button "${esc(cancelLabel)}" ` +
     `with icon caution giving up after ${timeoutSec}`;
   return new Promise(resolve => {
     execFile("/usr/bin/osascript", ["-e", script], { timeout: (timeoutSec + 5) * 1000 }, (err, stdout) => {
-      if (err) return resolve(false); // bouton Refuser → osascript renvoie une erreur "User canceled"
+      if (err) return resolve(false); // bouton d'annulation → osascript renvoie une erreur "User canceled"
       const out = String(stdout);
-      resolve(/button returned:Autoriser/.test(out) && !/gave up:true/.test(out));
+      resolve(new RegExp(`button returned:${okLabel.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`).test(out) && !/gave up:true/.test(out));
     });
   });
 }

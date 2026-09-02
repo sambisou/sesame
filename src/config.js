@@ -50,6 +50,17 @@ export function hostnameOf(url) {
   try { return new URL(url).hostname.replace(/^www\./, ""); } catch { return null; }
 }
 
+// Sous-domaines typiques d'une page de connexion : le site « vit » un cran au-dessus
+// (login.infomaniak.com → infomaniak.com), sinon l'onglet après connexion ne serait plus reconnu.
+const AUTH_LABELS = new Set(["login", "auth", "accounts", "account", "sso", "id", "idp", "signin", "sign-in", "connect", "oauth", "secure", "my", "mon", "espace-client", "espaceclient", "identity", "authentification", "authentication", "portal", "compte", "moncompte", "customer", "client"]);
+export function siteDomainFor(url) {
+  const h = hostnameOf(url);
+  if (!h) return null;
+  const parts = h.split(".");
+  if (parts.length >= 3 && AUTH_LABELS.has(parts[0])) return parts.slice(1).join(".");
+  return h;
+}
+
 /** Le site correspond-il à cette URL d'onglet ? (domaine ou sous-domaine) */
 export function siteMatchesUrl(site, url) {
   const h = hostnameOf(url);

@@ -12,8 +12,9 @@ const CALLER = process.env.SESAME_CALLER || process.argv[2] || "mcp";
 
 const text = obj => ({ content: [{ type: "text", text: typeof obj === "string" ? obj : JSON.stringify(obj, null, 2) }] });
 
-export function buildServer() {
-  const server = new McpServer({ name: "sesame", version: "0.1.0" });
+/** @param {string} [caller] nom de l'appelant journalisé (stdio : argument de ligne de commande ; HTTP : en-tête X-Sesame-Caller) */
+export function buildServer(caller = CALLER) {
+  const server = new McpServer({ name: "sesame", version: "0.2.0" });
 
   server.tool(
     "sesame_list_sites",
@@ -41,7 +42,7 @@ export function buildServer() {
       codeTimeoutSec: z.number().int().min(10).max(900).optional().default(180).describe("Délai maximal d'attente du code, en secondes (défaut 180)"),
     },
     async ({ site, reason, submit, openIfMissing, waitForCode, codeTimeoutSec }) =>
-      text(await login({ site, reason, submit, openIfMissing, waitForCode, codeTimeoutSec, caller: CALLER }))
+      text(await login({ site, reason, submit, openIfMissing, waitForCode, codeTimeoutSec, caller }))
   );
 
   server.tool(
@@ -51,14 +52,14 @@ export function buildServer() {
       site: z.string().describe("Nom du site (voir sesame_list_sites)"),
       timeoutSec: z.number().int().min(10).max(900).optional().default(180).describe("Délai maximal d'attente, en secondes (défaut 180)"),
     },
-    async ({ site, timeoutSec }) => text(await waitCode({ site, timeoutSec, caller: CALLER }))
+    async ({ site, timeoutSec }) => text(await waitCode({ site, timeoutSec, caller }))
   );
 
   server.tool(
     "sesame_open_login",
     "Ouvre (ou ramène au premier plan) la page de connexion d'un site dans le Chrome de l'utilisateur, sans rien remplir. Utile avant sesame_login si la page n'est pas encore ouverte.",
     { site: z.string().describe("Nom du site (voir sesame_list_sites)") },
-    async ({ site }) => text(await openLogin({ site, caller: CALLER }))
+    async ({ site }) => text(await openLogin({ site, caller }))
   );
 
   server.tool(

@@ -36,6 +36,11 @@ Usage : sesame <commande> [options]
   chrome                  Lance le Chrome « Sésame » (profil dédié, port DevTools ${CDP_URL.split(":").pop()}).
   install [claude-code|cowork|desktop|all]
                           Ajoute Sésame comme serveur MCP à Claude Code et/ou Claude Desktop (Cowork).
+  install <codex|gemini|cursor|vscode|windsurf|chatgpt|print>
+                          Affiche la configuration à coller pour un autre client MCP (rien n'est écrit).
+  serve [--port <n>]      Sert Sésame en HTTP local (Streamable HTTP, jeton obligatoire) pour les clients
+                          qui ne lancent pas de processus : ChatGPT via tunnel, agents distants, etc.
+  token [--rotate]        Affiche (ou renouvelle) le jeton du serveur HTTP.
   doctor                  Vérifie l'installation (Trousseau, Chrome, sites, verrou).
   help                    Cette aide.
 
@@ -55,6 +60,8 @@ async function main() {
     case "log": case "journal": return log();
     case "chrome": return chrome();
     case "install": return install(args[0] || "all");
+    case "serve": return serve();
+    case "token": return token();
     case "doctor": return doctor();
     default: console.error(`Commande inconnue : ${cmd}\n`); console.log(HELP); process.exit(1);
   }
@@ -211,7 +218,58 @@ function chrome() {
 
 function nodeBin() { return process.execPath; }
 
+async function serve() {
+  const { serveHttp, DEFAULT_PORT: DP } = await import("../src/http.js");
+  const port = Number(opt("--port") || DP);
+  const s = await serveHttp({ port });
+  console.log(`🔌 Sésame en HTTP sur ${s.url} (127.0.0.1 seulement, Streamable HTTP).`);
+  console.log(`   En-tête : Authorization: Bearer ${s.token}`);
+  console.log(`   Ou URL avec jeton : ${s.urlWithToken}`);
+  console.log("   Ctrl-C pour arrêter. Renouveler le jeton : sesame token --rotate");
+  await new Promise(() => {});
+}
+
+async function token() {
+  const { getOrCreateToken, rotateToken, TOKEN_FILE } = await import("../src/http.js");
+  const t = args.includes("--rotate") ? rotateToken() : getOrCreateToken();
+  if (args.includes("--rotate")) logEvent({ action: "http_token_rotate", caller: "cli", result: "ok" });
+  console.log(t);
+  console.error(`(fichier : ${TOKEN_FILE})`);
+}
+
+const SNIPPET_TARGETS = ["codex", "gemini", "cursor", "vscode", "windsurf", "chatgpt", "print"];
+
+/** Configurations à coller pour les clients MCP que Sésame n'écrit pas lui-même. */
+function printSnippets(target) {
+  const node = nodeBin();
+  const stdio = caller => ({ command: node, args: [MCP_BIN, caller] });
+  const j = o => JSON.stringify(o, null, 2);
+  const blocks = {
+    codex: `# Codex CLI (OpenAI) — ~/.codex/config.toml
+[mcp_servers.sesame]
+command = "${node}"
+args = ["${MCP_BIN}", "codex"]`,
+    gemini: `# Gemini CLI (Google) — ~/.gemini/settings.json
+${j({ mcpServers: { sesame: stdio("gemini") } })}`,
+    cursor: `# Cursor — ~/.cursor/mcp.json (global) ou .cursor/mcp.json (projet)
+${j({ mcpServers: { sesame: stdio("cursor") } })}`,
+    vscode: `# VS Code (GitHub Copilot, mode agent) — .vscode/mcp.json ou réglage utilisateur « mcp »
+${j({ servers: { sesame: { type: "stdio", ...stdio("vscode") } } })}`,
+    windsurf: `# Windsurf — ~/.codeium/windsurf/mcp_config.json
+${j({ mcpServers: { sesame: stdio("windsurf") } })}`,
+    chatgpt: `# ChatGPT (connecteur MCP, mode développeur) — ChatGPT ne lance pas de processus local :
+# 1. sesame serve            → serveur HTTP local avec jeton
+# 2. expose-le en HTTPS via un tunnel (ex. cloudflared tunnel --url http://127.0.0.1:7433)
+# 3. dans ChatGPT : Réglages → Connecteurs → Créer, URL = https://<ton-tunnel>/mcp/<jeton>, authentification : aucune
+# ⚠️  Toute personne qui connaît cette URL peut demander des connexions (validées par toi, journalisées,
+#     sans jamais obtenir un secret). Renouvelle le jeton avec : sesame token --rotate. Non testé par l'auteur.`,
+  };
+  const keys = target === "print" ? Object.keys(blocks) : [target];
+  for (const k of keys) console.log(blocks[k] + "\n");
+}
+
 function install(target) {
+  if (SNIPPET_TARGETS.includes(target)) return printSnippets(target);
   const entry = { command: nodeBin(), args: [MCP_BIN, "cowork"] };
   const results = [];
 

@@ -11,7 +11,8 @@
   "engines": { "node": ">=20" },
   "scripts": {
     "start": "node bin/sesame-mcp.js",
-    "check": "node --check bin/sesame.js && node --check bin/sesame-mcp.js && node --check src/*.js && node test/smoke.mjs",
+    "serve": "node bin/sesame.js serve",
+    "check": "node --check bin/sesame.js && node --check bin/sesame-mcp.js && node --check src/*.js && node test/smoke.mjs && node test/http.mjs",
     "test:live": "node test/2fa-live.mjs"
   },
   "dependencies": {

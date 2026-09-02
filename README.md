@@ -116,6 +116,22 @@ Le code, c'est toi qui le tapes — Sésame ne le voit jamais. Mais il ne te lai
 
 Le journal note chaque étape (`2fa` : attente, réussi, en attente). Si un site utilise un champ de code inhabituel, précise-le avec `--code-sel` dans `sesame add`.
 
+## Compatibilité : quels assistants ?
+
+Sésame parle **MCP**, le protocole ouvert des outils d'assistants, sur ses deux transports standard : **stdio** (le client lance `sesame-mcp` en local) et **Streamable HTTP** (`sesame serve`, sur 127.0.0.1, avec jeton). Tout client MCP conforme peut donc l'utiliser. Voici, honnêtement, ce qui a été vérifié.
+
+| Client | Transport | État |
+|---|---|---|
+| **Claude Code** (terminal et app Claude) | stdio | ✅ **Testé de bout en bout** : connexion réelle à un espace client EDF, dialogue d'autorisation, journal, attente du 2e facteur sur banc d'essai |
+| **Claude Desktop / Cowork** | stdio | ✅ **Testé** : `sesame install` déclare le serveur, les cinq outils apparaissent, appels journalisés sous le nom `cowork` |
+| **Client MCP officiel** (SDK TypeScript) | Streamable HTTP | ✅ **Testé** (`npm run check`) : jeton en en-tête ou dans l'URL, liste et appel d'outils, refus sans jeton |
+| Cursor, VS Code Copilot (mode agent), Windsurf | stdio | 🟡 Compatible par construction (même serveur stdio). Configuration fournie par `sesame install cursor\|vscode\|windsurf`. **Non testé.** |
+| Codex CLI (OpenAI), Gemini CLI (Google) | stdio | 🟡 Compatible par construction. `sesame install codex\|gemini`. **Non testé.** |
+| **ChatGPT** (connecteurs, mode développeur) | HTTP distant | 🟡 ChatGPT ne lance pas de processus local et n'atteint pas 127.0.0.1 : il faut `sesame serve` **plus un tunnel HTTPS** (cloudflared, ngrok…), URL `https://<tunnel>/mcp/<jeton>`. Possible, mais **non testé**, et à réserver à qui mesure le risque d'exposer un point d'entrée (voir SECURITY.md). |
+| Autres agents (LangChain, OpenAI Agents SDK, Mistral, etc.) | l'un ou l'autre | 🟡 Tout ce qui parle MCP fonctionne en principe. Non testé. |
+
+Voir toutes les configurations d'un coup : `sesame install print`.
+
 ## Limites connues
 
 - **Captcha** : Sésame ne le résout pas ; il le signale (`hint`) et c'est à toi de le faire dans le Chrome.

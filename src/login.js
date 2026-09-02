@@ -1,8 +1,8 @@
 // Orchestration d'une connexion : politique → validation → Chrome → remplissage → journal.
-import { getSite, loadSites, saveSites } from "./config.js";
-import { getSecret, hasSecret } from "./keychain.js";
+import { getSite, loadSites, saveSites, normalizeName, hostnameOf } from "./config.js";
+import { getSecret, hasSecret, setSecret, keychainAvailable } from "./keychain.js";
 import { logEvent } from "./journal.js";
-import { isLocked, askHuman, notify, notifyWaitingCode } from "./policy.js";
+import { isLocked, askHuman, askText, notify, notifyWaitingCode } from "./policy.js";
 import { connect, findPage, openPage, fillLogin, detectSecondFactor, waitForSecondFactor } from "./browser.js";
 
 /**
@@ -153,6 +153,76 @@ export async function waitCode({ site: siteName, timeoutSec = 180, caller = "mcp
   } finally {
     await browser?.close().catch(() => {});
   }
+}
+
+/**
+ * Un site n'est pas encore dans Sésame : ouvre des fenêtres Sésame sur le Mac pour que l'utilisateur
+ * saisisse lui-même identifiant et mot de passe. Les valeurs vont au Trousseau, jamais à l'IA.
+ * Remplace le « lance `sesame add …` dans un terminal ».
+ *
+ * @param {object} o
+ * @param {string} o.site     nom court (ex. "infomaniak")
+ * @param {string} o.url      URL de la page de connexion
+ * @param {string} [o.reason] pourquoi Claude en a besoin (affiché)
+ * @param {string} [o.note]   mémo (ex. « connexion en 2 étapes »)
+ * @param {string} [o.caller]
+ * @param {object} [o.ui]     surcharge des dialogues pour les tests : { confirm, text }
+ */
+export async function requestSite({ site: siteName, url, reason = "", note, caller = "mcp", ui } = {}) {
+  const key = normalizeName(siteName || "");
+  const domain = hostnameOf(url || "");
+  const base = { site: key || undefined, action: "request_site", caller };
+  if (!key) return { ok: false, message: "Nom de site manquant (ex. « infomaniak »)." };
+  if (!domain) return { ok: false, message: `URL de connexion invalide : ${url || "(vide)"}.` };
+  if (isLocked()) {
+    logEvent({ ...base, result: "refusé", detail: "verrou global actif" });
+    return { ok: false, message: "Sésame est verrouillé (sesame unlock pour rouvrir)." };
+  }
+  if (!keychainAvailable()) return { ok: false, message: "Trousseau macOS indisponible : Sésame ne fonctionne que sur Mac." };
+
+  const sites = loadSites();
+  const existing = sites[key];
+  if (existing && hasSecret(key)) {
+    logEvent({ ...base, result: "ok", detail: "déjà enregistré" });
+    return { ok: true, alreadyRegistered: true, site: key, domain: existing.domain, policy: existing.policy, message: `« ${key} » est déjà enregistré : appelle sesame_login.` };
+  }
+
+  const confirm = ui?.confirm || (o => askHuman({ ...o, timeoutSec: 180 }));
+  const text = ui?.text || askText;
+
+  const intro = `Claude (${caller}) a besoin de se connecter à « ${key} » (${domain}).\n\n${reason ? "Motif : " + reason + "\n\n" : ""}Sésame va vous demander votre identifiant puis votre mot de passe pour ce site. Ils seront rangés dans le Trousseau macOS ; Claude ne les verra jamais.\n\nEnregistrer ce site maintenant ?`;
+  const go = await confirm({ title: "Sésame — nouveau site", message: intro });
+  if (!go) {
+    logEvent({ ...base, result: "refusé", detail: "l'utilisateur a refusé ou n'a pas répondu" });
+    return { ok: false, refused: true, message: "L'utilisateur n'a pas souhaité enregistrer ce site maintenant." };
+  }
+
+  const username = await text({ title: `Sésame — ${key} (1/3)`, message: `Identifiant ou e-mail pour ${domain} (laissez vide si le site n'en demande pas) :` });
+  if (username === null) { logEvent({ ...base, result: "refusé", detail: "annulé à l'identifiant" }); return { ok: false, refused: true, message: "Saisie annulée par l'utilisateur." }; }
+
+  let password = null;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const p1 = await text({ title: `Sésame — ${key} (2/3)`, message: `Mot de passe pour ${domain} (la frappe est masquée) :`, hidden: true });
+    if (p1 === null) { logEvent({ ...base, result: "refusé", detail: "annulé au mot de passe" }); return { ok: false, refused: true, message: "Saisie annulée par l'utilisateur." }; }
+    if (!p1) continue;
+    const p2 = await text({ title: `Sésame — ${key} (3/3)`, message: "Confirmez le mot de passe :", hidden: true, okLabel: "Enregistrer" });
+    if (p2 === null) { logEvent({ ...base, result: "refusé", detail: "annulé à la confirmation" }); return { ok: false, refused: true, message: "Saisie annulée par l'utilisateur." }; }
+    if (p1 === p2) { password = p1; break; }
+    await confirm({ title: "Sésame", message: "Les deux saisies diffèrent. On recommence ?" });
+  }
+  if (!password) { logEvent({ ...base, result: "échec", detail: "mot de passe vide ou non confirmé" }); return { ok: false, message: "Mot de passe non confirmé après trois essais." }; }
+
+  setSecret(key, { username: username.trim(), password });
+  password = null;
+  sites[key] = {
+    domain, loginUrl: url, policy: existing?.policy || "ask",
+    note: note || existing?.note, selectors: existing?.selectors || {},
+    createdAt: existing?.createdAt || new Date().toISOString(), lastUsed: existing?.lastUsed,
+  };
+  saveSites(sites);
+  logEvent({ ...base, result: "ok", detail: `${domain}, politique ${sites[key].policy}, saisi par l'utilisateur dans la fenêtre Sésame` });
+  notify("Sésame", `« ${key} » enregistré. Claude peut maintenant demander la connexion (avec votre accord à chaque fois).`);
+  return { ok: true, site: key, domain, policy: sites[key].policy, message: `« ${key} » enregistré par l'utilisateur. Appelle maintenant sesame_login(site: "${key}").` };
 }
 
 function touchLastUsed(key) {

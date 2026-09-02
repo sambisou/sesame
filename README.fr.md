@@ -75,6 +75,8 @@ Options utiles :
 
 Relancer `sesame add edf` sur un site existant met à jour le secret (changement de mot de passe).
 
+**Sans terminal :** quand Claude a besoin d'un site pas encore enregistré, il appelle `sesame_request_site`. Sésame ouvre trois petites fenêtres sur ton Mac (confirmation, identifiant, mot de passe), range tout dans le Trousseau, et Claude apprend seulement que le site est disponible.
+
 ## Contrôler les accès un par un
 
 ```bash

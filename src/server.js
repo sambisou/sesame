@@ -6,7 +6,17 @@ import { loadSites } from "./config.js";
 import { hasSecret, keychainAvailable } from "./keychain.js";
 import { readJournal, logEvent } from "./journal.js";
 import { isLocked } from "./policy.js";
-import { login, openLogin, waitCode } from "./login.js";
+import { login, openLogin, waitCode, requestSite } from "./login.js";
+
+const UNKNOWN_HINT = "Ce site n'est pas dans Sésame. N'envoie pas l'utilisateur dans un terminal : appelle sesame_request_site(site, url, reason) — une fenêtre Sésame s'ouvre sur son Mac pour qu'il saisisse ses identifiants, puis rappelle sesame_login.";
+async function guarded(fn) {
+  try { return await fn(); }
+  catch (e) {
+    const msg = String(e.message || e);
+    if (/Site inconnu/.test(msg)) return { ok: false, message: msg, hint: UNKNOWN_HINT };
+    return { ok: false, message: msg.split("\n")[0].slice(0, 300) };
+  }
+}
 
 const CALLER = process.env.SESAME_CALLER || process.argv[2] || "mcp";
 
@@ -42,7 +52,23 @@ export function buildServer(caller = CALLER) {
       codeTimeoutSec: z.number().int().min(10).max(900).optional().default(180).describe("Délai maximal d'attente du code, en secondes (défaut 180)"),
     },
     async ({ site, reason, submit, openIfMissing, waitForCode, codeTimeoutSec }) =>
-      text(await login({ site, reason, submit, openIfMissing, waitForCode, codeTimeoutSec, caller }))
+      text(await guarded(async () => {
+        const r = await login({ site, reason, submit, openIfMissing, waitForCode, codeTimeoutSec, caller });
+        if (!r.ok && /Aucun identifiant enregistré/.test(r.message || "")) r.hint = UNKNOWN_HINT;
+        return r;
+      }))
+  );
+
+  server.tool(
+    "sesame_request_site",
+    "Quand un site n'est pas encore dans Sésame : ouvre une fenêtre Sésame sur le Mac de l'utilisateur qui lui propose de saisir lui-même identifiant et mot de passe pour ce site (rangés dans le Trousseau macOS, jamais transmis). À utiliser À LA PLACE de « lance sesame add … dans un terminal ». Donne le nom court du site, l'URL exacte de sa page de connexion et un motif honnête. Réponse : enregistré / refusé / déjà connu — jamais les valeurs. Ensuite, appelle sesame_login.",
+    {
+      site: z.string().max(40).describe("Nom court du site, minuscules (ex. « infomaniak »)"),
+      url: z.string().url().describe("URL de la page de connexion (ex. https://login.infomaniak.com/)"),
+      reason: z.string().max(200).optional().describe("Pourquoi tu as besoin de ce site (affiché à l'utilisateur)"),
+      note: z.string().max(120).optional().describe("Mémo utile, ex. « connexion en 2 étapes : e-mail, Continuer, mot de passe »"),
+    },
+    async ({ site, url, reason, note }) => text(await guarded(() => requestSite({ site, url, reason, note, caller })))
   );
 
   server.tool(
@@ -52,14 +78,14 @@ export function buildServer(caller = CALLER) {
       site: z.string().describe("Nom du site (voir sesame_list_sites)"),
       timeoutSec: z.number().int().min(10).max(900).optional().default(180).describe("Délai maximal d'attente, en secondes (défaut 180)"),
     },
-    async ({ site, timeoutSec }) => text(await waitCode({ site, timeoutSec, caller }))
+    async ({ site, timeoutSec }) => text(await guarded(() => waitCode({ site, timeoutSec, caller })))
   );
 
   server.tool(
     "sesame_open_login",
     "Ouvre (ou ramène au premier plan) la page de connexion d'un site dans le Chrome de l'utilisateur, sans rien remplir. Utile avant sesame_login si la page n'est pas encore ouverte.",
     { site: z.string().describe("Nom du site (voir sesame_list_sites)") },
-    async ({ site }) => text(await openLogin({ site, caller }))
+    async ({ site }) => text(await guarded(() => openLogin({ site, caller })))
   );
 
   server.tool(

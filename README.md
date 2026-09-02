@@ -27,6 +27,7 @@ The idea: Claude never asks *"give me your EDF password"*. It asks Sésame *"fil
 | `sesame_list_sites` | lists known sites | names, domains, policies — **no secret** |
 | `sesame_login` | fills in (and submits) the login form in Chrome, waits for a second-factor code if the site asks for one | `ok / refused / failed` + steps + URL |
 | `sesame_wait_code` | resumes waiting for a second-factor code you type yourself | `ok / failed` |
+| `sesame_request_site` | when a site is not registered yet: opens Sésame windows on the Mac so **you** type the username and password (straight to the Keychain) | `registered / refused / already known` — never the values |
 | `sesame_open_login` | opens a site's login page | URL |
 | `sesame_journal` | reads the access log | events |
 
@@ -80,6 +81,8 @@ Useful options:
 | `--note "work account"` | memo shown by `sesame list` |
 
 Running `sesame add edf` again on an existing site updates the secret (password change).
+
+**No terminal needed:** when Claude needs a site that is not registered yet, it calls `sesame_request_site`. Sésame opens three small windows on your Mac (confirm, username, password), stores everything in the Keychain, and Claude only learns that the site is now available.
 
 ## Control access, site by site
 

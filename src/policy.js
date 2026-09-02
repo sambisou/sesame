@@ -32,6 +32,29 @@ export function askHuman({ title, message, timeoutSec = 90 }) {
 }
 
 /**
+ * Boîte de dialogue macOS avec un champ de saisie. `hidden` masque la frappe (mot de passe).
+ * Renvoie la chaîne saisie, ou null si l'utilisateur annule / ne répond pas.
+ * La valeur ne quitte jamais ce processus : elle sert au Trousseau, jamais à l'IA.
+ */
+export function askText({ title, message, hidden = false, defaultAnswer = "", okLabel = "Continuer", timeoutSec = 180 }) {
+  if (process.platform !== "darwin") return Promise.resolve(null);
+  const esc = s => String(s).replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+  const script =
+    `display dialog "${esc(message)}" with title "${esc(title)}" default answer "${esc(defaultAnswer)}" ` +
+    `${hidden ? "with hidden answer " : ""}buttons {"Annuler", "${esc(okLabel)}"} default button "${esc(okLabel)}" cancel button "Annuler" ` +
+    `with icon note giving up after ${timeoutSec}`;
+  return new Promise(resolve => {
+    execFile("/usr/bin/osascript", ["-e", script], { timeout: (timeoutSec + 5) * 1000, maxBuffer: 1 << 20 }, (err, stdout) => {
+      if (err) return resolve(null);
+      const out = String(stdout);
+      if (/gave up:true/.test(out)) return resolve(null);
+      const m = out.match(/text returned:([\s\S]*?)(?:, gave up:(?:true|false))?\s*$/);
+      resolve(m ? m[1] : null);
+    });
+  });
+}
+
+/**
  * Prévient l'utilisateur qu'un site demande un code (2e facteur) et que Sésame attend.
  * Non bloquant : l'utilisateur tape le code dans le Chrome Sésame, la détection se fait dans la page.
  */

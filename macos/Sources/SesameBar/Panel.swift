@@ -25,9 +25,9 @@ struct Panel: View {
                     if store.sites.isEmpty { emptyLine("Aucun site. Ajoute-en un ci-dessous : Claude pourra s'y connecter sans jamais voir le mot de passe.") }
                     ForEach(store.sites) { s in siteRow(s) }
                     addBlock
-                    sectionTitle("Journal", trailing: "\(min(store.events.count, 8)) dernières")
-                    if store.events.isEmpty { emptyLine("Rien encore.") }
-                    ForEach(store.events.prefix(8)) { e in eventRow(e) }
+                    sectionTitle("Journal", trailing: "\(min(visibleEvents.count, 8)) dernières")
+                    if visibleEvents.isEmpty { emptyLine("Rien encore.") }
+                    ForEach(visibleEvents.prefix(8)) { e in eventRow(e) }
                 }
                 .padding(.bottom, 6)
             }
@@ -37,6 +37,11 @@ struct Panel: View {
         }
         .frame(width: 372)
         .background(Color(nsColor: .windowBackgroundColor))
+    }
+
+    /// Le journal du panneau ne montre que ce qui concerne l'utilisateur : pas les démarrages techniques du serveur.
+    private var visibleEvents: [Event] {
+        store.events.filter { !["server_start", "http_start", "chrome_start"].contains($0.action) }
     }
 
     private var listHeight: CGFloat {

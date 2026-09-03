@@ -13,10 +13,13 @@ struct SiteRequest: Identifiable, Equatable {
 }
 
 /// Fenêtres ordinaires (pas le menu) : le formulaire d'identifiants, pour une demande de Claude ou un ajout manuel.
+/// `Windows` est lui-même le délégué de chaque fenêtre (un objet retenu, jamais désalloué) : la fermeture par le
+/// bouton rouge vaut « Plus tard » et répond au serveur tout de suite.
 @MainActor
-final class Windows {
+final class Windows: NSObject, NSWindowDelegate {
     static let shared = Windows()
     private var open: [String: NSWindow] = [:]
+    private var onClose: [String: () -> Void] = [:]
 
     func showRequest(_ r: SiteRequest, store: Store) {
         show(key: "req-" + r.id, title: "Sésame — \(r.site)", store: store, request: r) { saved in
@@ -40,25 +43,27 @@ final class Windows {
         w.isReleasedWhenClosed = false
         w.level = .floating
         w.center()
-        w.delegate = Closer(key: key) { [weak self] k in
-            if request != nil { onDone(false) }
-            self?.open.removeValue(forKey: k)
-        }
+        w.delegate = self
         open[key] = w
+        onClose[key] = { if request != nil { onDone(false) } }
         w.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
     }
 
+    /// Fermeture programmée (après « Enregistrer » ou « Plus tard ») : le délégué est retiré avant, pour ne pas répondre deux fois.
     private func close(_ key: String) {
         guard let w = open.removeValue(forKey: key) else { return }
+        onClose.removeValue(forKey: key)
         w.delegate = nil
         w.close()
     }
 
-    /// Fermeture par le bouton rouge : vaut « Plus tard ».
-    private final class Closer: NSObject, NSWindowDelegate {
-        let key: String; let onClose: (String) -> Void
-        init(key: String, onClose: @escaping (String) -> Void) { self.key = key; self.onClose = onClose }
-        func windowWillClose(_ notification: Notification) { onClose(key) }
+    /// Bouton rouge ou Cmd+W : vaut « Plus tard ».
+    func windowWillClose(_ notification: Notification) {
+        guard let w = notification.object as? NSWindow, let key = open.first(where: { $0.value === w })?.key else { return }
+        open.removeValue(forKey: key)
+        let cb = onClose.removeValue(forKey: key)
+        w.delegate = nil
+        cb?()
     }
 }

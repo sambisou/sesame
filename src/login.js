@@ -61,8 +61,10 @@ export async function login({ site: siteName, submit = true, openIfMissing = tru
       page = await openPage(browser, site.loginUrl || `https://${site.domain}/`);
       opened = true;
     } else if (!(await hasLoginFields(page, site))) {
-      // Onglet du site sans formulaire (déjà connecté, tableau de bord, déconnexion) : on rouvre la page de connexion.
-      await gotoLogin(page, site.loginUrl || `https://${site.domain}/`, site);
+      // Onglet du site sans formulaire (déjà connecté, tableau de bord, déconnexion) : on ouvre la page de
+      // connexion dans un autre onglet, sans toucher à celui de l'utilisateur.
+      page = await openPage(browser, site.loginUrl || `https://${site.domain}/`);
+      if (!(await hasLoginFields(page, site))) await gotoLogin(page, site.loginUrl || `https://${site.domain}/`, site);
       opened = true;
     }
 
@@ -104,6 +106,14 @@ export async function login({ site: siteName, submit = true, openIfMissing = tru
 
 export async function openLogin({ site: siteName, caller = "mcp" }) {
   const site = getSite(siteName);
+  if (isLocked()) {
+    logEvent({ site: site.key, action: "open_login", caller, result: "refusé", detail: "verrou global actif" });
+    return { ok: false, message: "Sésame est verrouillé (sesame unlock, ou l'interrupteur Verrou de l'app)." };
+  }
+  if (site.policy === "revoked") {
+    logEvent({ site: site.key, action: "open_login", caller, result: "refusé", detail: "accès révoqué pour ce site" });
+    return { ok: false, message: `Accès à « ${site.key} » coupé par l'utilisateur.` };
+  }
   const url = site.loginUrl || `https://${site.domain}/`;
   let browser;
   try {
@@ -128,6 +138,14 @@ export async function openLogin({ site: siteName, caller = "mcp" }) {
  */
 export async function waitCode({ site: siteName, timeoutSec = 180, caller = "mcp" }) {
   const site = getSite(siteName);
+  if (isLocked()) {
+    logEvent({ site: site.key, action: "2fa", caller, result: "refusé", detail: "verrou global actif" });
+    return { ok: false, message: "Sésame est verrouillé (sesame unlock, ou l'interrupteur Verrou de l'app)." };
+  }
+  if (site.policy === "revoked") {
+    logEvent({ site: site.key, action: "2fa", caller, result: "refusé", detail: "accès révoqué pour ce site" });
+    return { ok: false, message: `Accès à « ${site.key} » coupé par l'utilisateur.` };
+  }
   const base = { site: site.key, action: "2fa", caller };
   let browser;
   try {
@@ -251,7 +269,7 @@ export async function requestSite({ site: siteName, url, reason = "", note, call
   }
   // En cas de réenregistrement, on garde le domaine déjà réglé (parfois élargi à la main, ex. edf.fr).
   sites[key] = {
-    domain: existing?.domain || domain, loginUrl: url, policy: existing?.policy || "ask",
+    domain: existing?.domain || domain, loginUrl: existing?.loginUrl || url, policy: existing?.policy || "ask",
     note: note || existing?.note, selectors: existing?.selectors || {},
     createdAt: existing?.createdAt || new Date().toISOString(), lastUsed: existing?.lastUsed,
   };

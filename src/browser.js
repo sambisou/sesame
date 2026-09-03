@@ -1,21 +1,23 @@
 // Connexion à Chrome (protocole DevTools) et remplissage des champs.
 // Chrome doit tourner avec --remote-debugging-port (voir `sesame chrome`).
 import fs from "node:fs";
-import { spawn } from "node:child_process";
+import { spawn, execFileSync } from "node:child_process";
 import { chromium } from "playwright-core";
-import { CDP_URL, CHROME_PROFILE, siteMatchesUrl } from "./config.js";
+import { CDP_URL, CHROME_PROFILE, siteMatchesUrl, hostnameOf } from "./config.js";
 
 // Champs de recherche et assimilés : jamais un identifiant.
 const NOT_SEARCH = ':not([type="search"]):not([role="searchbox"]):not([name*="search" i]):not([id*="search" i]):not([name*="recherche" i]):not([id*="recherche" i]):not([name="q"]):not([placeholder*="recherch" i]):not([placeholder*="search" i])';
-const USER_SELECTORS = [
+// Champs identifiant FORTS (suffisent seuls) et FAIBLES (un simple champ texte : accepté seulement sur la page de
+// connexion déclarée, ou à côté d'un champ mot de passe — sinon n'importe quel formulaire du site passerait pour un login).
+const USER_STRONG = [
   'input[autocomplete="username"]',
   'input[type="email"]',
   'input[name*="email" i]', 'input[id*="email" i]',
   'input[name*="user" i]', 'input[id*="user" i]', 'input[name*="login" i]', 'input[id*="login" i]',
   'input[name*="identifiant" i]', 'input[id*="identifiant" i]',
-  `input[type="tel"]${NOT_SEARCH}`,
-  `input[type="text"]${NOT_SEARCH}`,
 ];
+const USER_WEAK = [`input[type="tel"]${NOT_SEARCH}`, `input[type="text"]${NOT_SEARCH}`];
+const USER_SELECTORS = [...USER_STRONG, ...USER_WEAK];
 const PASS_SELECTORS = ['input[type="password"]'];
 const SUBMIT_SELECTORS = [
   'button[type="submit"]', 'input[type="submit"]',
@@ -43,11 +45,35 @@ const OTP_WEAK = [
 ];
 const OTP_TEXT = /code (de |d')?(vérification|verification|sécurité|securite|confirmation|validation|à usage unique|unique)|code (reçu|recu|envoyé|envoye|transmis)|(envoyé|envoye|reçu|recu) par (sms|e-?mail|courriel|mail)|code (à|a|de) \d+ chiffres|saisis(?:sez)? (?:le|votre) code|entrez (?:le|votre) code|verification code|security code|one-time (code|password)|\d[- ]digit code|code (that|we) sent|sent (you|to you) (a|the) code|enter (the|your|a) code|two-factor|2fa|deux facteurs|double authentification|authentification forte|authenticator/i;
 
-async function cdpReachable() {
+/** État du port DevTools : "down" (rien n'écoute), "foreign" (autre chose qu'un Chrome Sésame), "up" (le nôtre). */
+async function cdpProbe() {
+  let info;
   try {
     const r = await fetch(`${CDP_URL}/json/version`, { signal: AbortSignal.timeout(1500) });
-    return r.ok;
-  } catch { return false; }
+    if (!r.ok) return "foreign";
+    info = await r.json();
+  } catch (e) {
+    return e?.cause?.code === "ECONNREFUSED" || /ECONNREFUSED/.test(String(e?.message)) ? "down" : "foreign";
+  }
+  const ws = info?.webSocketDebuggerUrl;
+  if (!ws) return "foreign";
+  // Est-ce bien NOTRE Chrome ? Le processus qui écoute sur le port doit avoir été lancé avec le profil Sésame.
+  try {
+    const port = new URL(CDP_URL).port || "9222";
+    const pid = execFileSync("/usr/sbin/lsof", ["-nP", "-t", `-iTCP:${port}`, "-sTCP:LISTEN"], { encoding: "utf8", timeout: 3000 }).trim().split("\n")[0];
+    if (!pid) return "foreign";
+    const cmd = execFileSync("/bin/ps", ["-o", "command=", "-p", pid], { encoding: "utf8", timeout: 3000 });
+    return cmd.includes(`--user-data-dir=${CHROME_PROFILE}`) ? "up" : "foreign";
+  } catch { return "foreign"; }
+}
+async function cdpReachable() { return (await cdpProbe()) === "up"; }
+
+/** Ramène le Chrome Sésame devant (Page.bringToFront n'active pas l'application sur macOS). */
+export function activateChrome() {
+  try {
+    const pids = execFileSync("/usr/bin/pgrep", ["-f", `--user-data-dir=${CHROME_PROFILE}`], { encoding: "utf8" }).trim().split("\n").filter(Boolean);
+    if (pids[0]) execFileSync("/usr/bin/osascript", ["-e", `tell application "System Events" to set frontmost of (first process whose unix id is ${Number(pids[0])}) to true`], { stdio: "ignore", timeout: 3000 });
+  } catch {}
 }
 
 /** Lance le Chrome « Sésame » (profil dédié, port DevTools) comme `sesame chrome`, et attend qu'il réponde. */
@@ -60,12 +86,18 @@ export async function launchChrome({ waitMs = 15000 } = {}) {
     "--no-first-run", "--no-default-browser-check", "--password-store=basic", "about:blank",
   ], { detached: true, stdio: "ignore" });
   child.unref();
+  launchedPid = child.pid;
   const deadline = Date.now() + waitMs;
   while (Date.now() < deadline) {
     if (await cdpReachable()) return true;
     await new Promise(r => setTimeout(r, 500));
   }
   return false;
+}
+let launchedPid = null;
+/** Arrête le Chrome lancé par ce processus (bancs d'essai). */
+export function stopLaunchedChrome() {
+  if (launchedPid) { try { process.kill(launchedPid, "SIGTERM"); } catch {} launchedPid = null; }
 }
 
 /** Réduit ou déplie la fenêtre Chrome qui contient l'onglet (protocole DevTools). Silencieux en cas d'échec. */
@@ -81,7 +113,9 @@ export async function setWindowState(page, state) {
 export async function connect() {
   // Chrome Sésame fermé : on le lance nous-mêmes (l'utilisateur n'a pas à passer par un terminal).
   let justLaunched = false;
-  if (!(await cdpReachable())) {
+  const state = await cdpProbe();
+  if (state === "foreign") throw new Error(`Un autre programme occupe ${CDP_URL} : ce n'est pas le Chrome Sésame. Ferme-le, ou change le port (SESAME_CDP_URL).`);
+  if (state === "down") {
     const up = await launchChrome();
     if (!up) throw new Error(`Chrome Sésame ne répond pas sur ${CDP_URL} après lancement. Vérifie qu'un autre Chrome n'occupe pas le port.`);
     justLaunched = true;
@@ -138,7 +172,7 @@ export async function findPage(browser, site) {
   if (pages.length === 0) return null;
   // On préfère un onglet qui montre un champ mot de passe, puis un champ identifiant plausible.
   for (const p of pages.slice().reverse()) if (await firstVisible(p, PASS_SELECTORS)) return p;
-  for (const p of pages.slice().reverse()) if (await firstVisible(p, USER_SELECTORS)) return p;
+  for (const p of pages.slice().reverse()) if (await locateUser(p, site)) return p;
   return pages[pages.length - 1];
 }
 
@@ -146,7 +180,7 @@ export async function findPage(browser, site) {
 export async function hasLoginFields(page, site) {
   if (page.isClosed()) return false;
   if (await locate(page, site, site.selectors?.password, PASS_SELECTORS)) return true;
-  return !!(await locate(page, site, site.selectors?.username, USER_SELECTORS));
+  return !!(await locateUser(page, site));
 }
 
 /** Ramène un onglet du site sur sa page de connexion (session déjà ouverte, tableau de bord, page de déconnexion…). */
@@ -194,6 +228,17 @@ async function locate(page, site, custom, fallbacks) {
     el = await firstVisible(page, sels, frame);
     if (el) return { el, frame };
   }
+  return null;
+}
+
+/** Champ identifiant plausible : sélecteur du site, champ fort, ou champ faible sur la page de connexion / près d'un mot de passe. */
+async function locateUser(page, site) {
+  if (site.selectors?.username) return locate(page, site, site.selectors.username, []);
+  const strong = await locate(page, site, null, USER_STRONG);
+  if (strong) return strong;
+  const onLoginPage = site.loginUrl && hostnameOf(page.url()) === hostnameOf(site.loginUrl);
+  const nearPassword = !!(await locate(page, site, site.selectors?.password, PASS_SELECTORS));
+  if (onLoginPage || nearPassword) return locate(page, site, null, USER_WEAK);
   return null;
 }
 
@@ -309,6 +354,7 @@ export async function waitForSecondFactor(page, site, { timeoutSec = 180, messag
   let clear = 0;
   await setWindowState(page, "normal");      // dépliée si elle était réduite
   await page.bringToFront().catch(() => {}); // ici, oui : l'utilisateur doit taper le code
+  activateChrome();
   await showBanner(page, banner);
   while (Date.now() < deadline) {
     if (page.isClosed()) return { done: false, elapsedSec: elapsed(), reason: "onglet fermé pendant l'attente du code" };
@@ -351,13 +397,13 @@ export async function fillLogin(page, site, secret, { submitForm = true, waitSec
   // Pas de passage au premier plan : la connexion se fait en arrière-plan, Chrome ne vient devant que pour un code.
   await page.waitForLoadState("domcontentloaded", { timeout: 10000 }).catch(() => {});
 
-  let user = secret.username ? await locate(page, site, site.selectors?.username, USER_SELECTORS) : null;
+  let user = secret.username ? await locateUser(page, site) : null;
   let pass = await locate(page, site, site.selectors?.password, PASS_SELECTORS);
 
   if (!user && !pass) {
     // Parfois le formulaire arrive après un clic "Se connecter" : on attend un peu.
     await page.waitForTimeout(1500);
-    user = secret.username ? await locate(page, site, site.selectors?.username, USER_SELECTORS) : null;
+    user = secret.username ? await locateUser(page, site) : null;
     pass = await locate(page, site, site.selectors?.password, PASS_SELECTORS);
   }
   if (!user && !pass) {

@@ -34,7 +34,9 @@ final class Store {
     let home: URL
     private var raw: [String: Any] = [:]
     private var timer: Timer?
+    private var heartbeatTimer: DispatchSourceTimer?
     private let service = ProcessInfo.processInfo.environment["SESAME_KEYCHAIN_SERVICE"] ?? "sesame"
+    private var shownRequests: Set<String> = []
 
     init() {
         let env = ProcessInfo.processInfo.environment["SESAME_HOME"]
@@ -48,79 +50,56 @@ final class Store {
     var requestsDir: URL { home.appendingPathComponent("requests") }
     var aliveFile: URL { home.appendingPathComponent("bar.alive") }
 
-    private var shownRequests: Set<String> = []
-
     func start() {
         reload()
         timer?.invalidate()
         timer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in self?.reload() }
         RunLoop.main.add(timer!, forMode: .common)
+        // Le battement de cœur vit sur sa propre file : un appel `security` un peu long sur le thread principal
+        // ne doit pas faire croire au serveur que l'app a disparu.
+        let t = DispatchSource.makeTimerSource(queue: DispatchQueue.global(qos: .utility))
+        t.schedule(deadline: .now(), repeating: 2)
+        let alive = aliveFile, homeDir = home
+        t.setEventHandler {
+            try? FileManager.default.createDirectory(at: homeDir, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+            try? "\(ProcessInfo.processInfo.processIdentifier)\n".write(to: alive, atomically: true, encoding: .utf8)
+        }
+        t.resume()
+        heartbeatTimer = t
     }
 
     // MARK: lecture
 
     func reload() {
         locked = FileManager.default.fileExists(atPath: lockFile.path)
-        loadSites()
+        _ = loadSites()
         loadJournal()
         checkChrome()
-        heartbeat()
         pollRequests()
     }
 
-    /// Signale au serveur MCP que l'app est là : il lui confiera alors les demandes d'identifiants
-    /// (fenêtre unique avec œil) au lieu d'enchaîner des boîtes de dialogue.
-    private func heartbeat() {
-        try? FileManager.default.createDirectory(at: home, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-        try? "\(ProcessInfo.processInfo.processIdentifier)\n".write(to: aliveFile, atomically: true, encoding: .utf8)
-    }
-
-    /// Demandes déposées par le serveur MCP : une fenêtre par demande, une seule fois.
-    private func pollRequests() {
-        guard let names = try? FileManager.default.contentsOfDirectory(atPath: requestsDir.path) else { return }
-        let iso = ISO8601DateFormatter(); iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        for n in names where n.hasSuffix(".json") && !n.hasSuffix(".done.json") {
-            let id = String(n.dropLast(5))
-            if shownRequests.contains(id) { continue }
-            if FileManager.default.fileExists(atPath: requestsDir.appendingPathComponent(id + ".done.json").path) { continue }
-            guard let d = try? Data(contentsOf: requestsDir.appendingPathComponent(n)),
-                  let o = try? JSONSerialization.jsonObject(with: d) as? [String: Any],
-                  let site = o["site"] as? String, let url = o["url"] as? String else { continue }
-            let ts = (o["ts"] as? String).flatMap { iso.date(from: $0) } ?? Date()
-            // Une demande de plus de dix minutes est périmée : le serveur a déjà rendu la main.
-            if Date().timeIntervalSince(ts) > 600 { continue }
-            shownRequests.insert(id)
-            let r = SiteRequest(id: id, site: site, url: url, reason: o["reason"] as? String ?? "", note: o["note"] as? String,
-                                caller: o["caller"] as? String ?? "Claude", ts: ts)
-            Task { @MainActor in Windows.shared.showRequest(r, store: self) }
-        }
-    }
-
-    /// Réponse à une demande : le serveur MCP attend ce fichier.
-    func resolveRequest(_ id: String, saved: Bool) {
-        let o: [String: Any] = ["status": saved ? "saved" : "refused", "ts": ISO8601DateFormatter().string(from: Date())]
-        if let d = try? JSONSerialization.data(withJSONObject: o) {
-            try? d.write(to: requestsDir.appendingPathComponent(id + ".done.json"), options: .atomic)
-        }
-    }
-
-    private func loadSites() {
+    /// Relit sites.json. Renvoie false si le fichier existe mais est illisible (on n'écrit alors jamais par-dessus).
+    @discardableResult
+    private func loadSites() -> Bool {
+        guard FileManager.default.fileExists(atPath: sitesFile.path) else { raw = [:]; sites = []; return true }
         guard let data = try? Data(contentsOf: sitesFile),
-              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { raw = [:]; sites = []; return }
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return false }
         raw = obj
         let iso = ISO8601DateFormatter(); iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         let iso2 = ISO8601DateFormatter()
-        sites = obj.keys.sorted().compactMap { key in
+        let next = obj.keys.sorted().compactMap { key -> Site? in
             guard let s = obj[key] as? [String: Any] else { return nil }
             let lu = (s["lastUsed"] as? String).flatMap { iso.date(from: $0) ?? iso2.date(from: $0) }
             return Site(id: key, domain: s["domain"] as? String ?? "", loginUrl: s["loginUrl"] as? String ?? "",
                         policy: s["policy"] as? String ?? "ask", note: s["note"] as? String, lastUsed: lu)
         }
+        if next != sites { sites = next }
+        return true
     }
 
     private func loadJournal() {
         guard let text = try? String(contentsOf: journalFile, encoding: .utf8) else { events = []; return }
-        let lines = text.split(separator: "\n").suffix(40)
+        let lines = text.split(separator: "\n").suffix(60)
         let iso = ISO8601DateFormatter(); iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         let iso2 = ISO8601DateFormatter()
         var out: [Event] = []
@@ -130,7 +109,8 @@ final class Store {
             out.append(Event(id: "\(tsS)-\(i)", ts: ts, site: o["site"] as? String, action: o["action"] as? String ?? "?",
                              caller: o["caller"] as? String, result: o["result"] as? String, detail: o["detail"] as? String))
         }
-        events = Array(out.reversed())
+        let next = Array(out.reversed())
+        if next != events { events = next }
     }
 
     private func checkChrome() {
@@ -138,8 +118,43 @@ final class Store {
         req.timeoutInterval = 1.5
         URLSession.shared.dataTask(with: req) { [weak self] data, resp, _ in
             let up = (resp as? HTTPURLResponse)?.statusCode == 200 && data != nil
-            DispatchQueue.main.async { self?.chromeUp = up }
+            DispatchQueue.main.async { if self?.chromeUp != up { self?.chromeUp = up } }
         }.resume()
+    }
+
+    /// Demandes déposées par le serveur MCP : une fenêtre par demande, une seule fois ; les demandes périmées sont purgées.
+    private func pollRequests() {
+        guard let names = try? FileManager.default.contentsOfDirectory(atPath: requestsDir.path) else { return }
+        let iso = ISO8601DateFormatter(); iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let iso2 = ISO8601DateFormatter()
+        for n in names where n.hasSuffix(".json") {
+            let file = requestsDir.appendingPathComponent(n)
+            // Fichiers orphelins (serveur parti sans nettoyer) : au-delà de dix minutes, on les efface.
+            if let attrs = try? FileManager.default.attributesOfItem(atPath: file.path), let m = attrs[.modificationDate] as? Date, Date().timeIntervalSince(m) > 600 {
+                try? FileManager.default.removeItem(at: file); continue
+            }
+            if n.hasSuffix(".done.json") { continue }
+            let id = String(n.dropLast(5))
+            if shownRequests.contains(id) { continue }
+            if FileManager.default.fileExists(atPath: requestsDir.appendingPathComponent(id + ".done.json").path) { continue }
+            guard let d = try? Data(contentsOf: file),
+                  let o = try? JSONSerialization.jsonObject(with: d) as? [String: Any],
+                  let site = o["site"] as? String, let url = o["url"] as? String else { continue }
+            let ts = (o["ts"] as? String).flatMap { iso.date(from: $0) ?? iso2.date(from: $0) } ?? Date()
+            if Date().timeIntervalSince(ts) > 600 { continue }
+            shownRequests.insert(id)
+            let r = SiteRequest(id: id, site: site, url: url, reason: o["reason"] as? String ?? "", note: o["note"] as? String,
+                                caller: o["caller"] as? String ?? "Claude", ts: ts)
+            Task { @MainActor in Windows.shared.showRequest(r, store: self) }
+        }
+    }
+
+    /// Réponse à une demande : le serveur MCP attend ce fichier. Idempotent : la première réponse compte.
+    func resolveRequest(_ id: String, saved: Bool) {
+        let done = requestsDir.appendingPathComponent(id + ".done.json")
+        if FileManager.default.fileExists(atPath: done.path) { return }
+        let o: [String: Any] = ["status": saved ? "saved" : "refused", "ts": ISO8601DateFormatter().string(from: Date())]
+        if let d = try? JSONSerialization.data(withJSONObject: o) { try? d.write(to: done, options: .atomic) }
     }
 
     // MARK: écriture (mêmes règles que la CLI)
@@ -148,23 +163,27 @@ final class Store {
         let data = try JSONSerialization.data(withJSONObject: raw, options: [.prettyPrinted, .sortedKeys])
         let tmp = sitesFile.appendingPathExtension("tmp")
         try data.write(to: tmp, options: .atomic)
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: tmp.path)
         _ = try FileManager.default.replaceItemAt(sitesFile, withItemAt: tmp)
         try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: sitesFile.path)
     }
 
+    /// Ajout au journal en O_APPEND (plusieurs écrivains : serveur, CLI, app), jamais de ligne tronquée.
     private func log(site: String?, action: String, result: String, detail: String? = nil) {
         let iso = ISO8601DateFormatter(); iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         var o: [String: Any] = ["ts": iso.string(from: Date()), "action": action, "caller": "barre", "result": result]
         if let site { o["site"] = site }
         if let detail { o["detail"] = detail }
-        guard let data = try? JSONSerialization.data(withJSONObject: o), var line = String(data: data, encoding: .utf8) else { return }
-        line += "\n"
+        guard let data = try? JSONSerialization.data(withJSONObject: o), let line = String(data: data, encoding: .utf8) else { return }
         try? FileManager.default.createDirectory(at: home, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-        if let h = try? FileHandle(forWritingTo: journalFile) { h.seekToEndOfFile(); h.write(line.data(using: .utf8)!); try? h.close() }
-        else { try? line.write(to: journalFile, atomically: true, encoding: .utf8) }
+        guard let f = fopen(journalFile.path, "a") else { return }
+        fputs(line + "\n", f)
+        fclose(f)
+        chmod(journalFile.path, 0o600)
     }
 
     func setPolicy(_ key: String, _ policy: String) {
+        guard loadSites() else { lastError = "sites.json illisible : rien n'a été modifié."; return }
         guard ["ask", "always", "revoked"].contains(policy), var s = raw[key] as? [String: Any] else { return }
         s["policy"] = policy; raw[key] = s
         do { try saveSites(); log(site: key, action: "policy", result: "ok", detail: policy); lastError = nil }
@@ -184,9 +203,16 @@ final class Store {
     }
 
     func removeSite(_ key: String) {
-        _ = security(["delete-generic-password", "-s", service, "-a", key])
+        guard loadSites() else { lastError = "sites.json illisible : rien n'a été modifié."; return }
+        let had = security(["find-generic-password", "-s", service, "-a", key]).status == 0
+        let del = security(["delete-generic-password", "-s", service, "-a", key])
+        if had && del.status != 0 {
+            lastError = "Le Trousseau a refusé de supprimer le secret de « \(key) » (code \(del.status)). Le site est conservé."
+            log(site: key, action: "remove_site", result: "échec", detail: "suppression Trousseau refusée (code \(del.status))")
+            return
+        }
         raw.removeValue(forKey: key)
-        do { try saveSites(); log(site: key, action: "remove_site", result: "ok", detail: "site et secret supprimés"); lastError = nil }
+        do { try saveSites(); log(site: key, action: "remove_site", result: "ok", detail: had ? "site et secret supprimés" : "site supprimé (aucun secret)"); lastError = nil }
         catch { lastError = "Impossible d'écrire sites.json : \(error.localizedDescription)" }
         loadSites()
     }
@@ -194,11 +220,12 @@ final class Store {
     /// Enregistre un site : le secret va au Trousseau (sans application de confiance), jamais ailleurs.
     func addSite(name: String, url: String, username: String, password: String, note: String) -> String? {
         let key = Store.normalize(name)
-        guard !key.isEmpty else { return "Donne un nom court au site (ex. infomaniak)." }
+        guard !key.isEmpty, key.count <= 64, key.range(of: #"^[a-z0-9._-]+$"#, options: .regularExpression) != nil else { return "Donne un nom court au site (lettres, chiffres, tirets — ex. infomaniak)." }
         guard let u = URL(string: url.trimmingCharacters(in: .whitespaces)), let host = u.host else { return "URL de la page de connexion invalide." }
         let local = ["127.0.0.1", "localhost"].contains(host)
         guard u.scheme == "https" || (local && u.scheme == "http") else { return "La page de connexion doit être en https://." }
         guard !password.isEmpty else { return "Le mot de passe est vide." }
+        guard loadSites() else { return "sites.json est illisible : rien n'a été modifié." }
         let existing = raw[key] as? [String: Any]
         let domain = existing?["domain"] as? String ?? Store.siteDomain(for: host)
         let payload: [String: String] = ["username": username.trimmingCharacters(in: .whitespaces), "password": password]
@@ -209,15 +236,19 @@ final class Store {
             log(site: key, action: "add_site", result: "échec", detail: "écriture Trousseau (code \(r.status))")
             return "Le Trousseau a refusé l'écriture (code \(r.status)). Est-il déverrouillé ?"
         }
+        // Le Trousseau a pris quelques centaines de ms : on repart du fichier tel qu'il est maintenant.
+        guard loadSites() else { return "Secret enregistré, mais sites.json est devenu illisible." }
         let iso = ISO8601DateFormatter(); iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        var s: [String: Any] = existing ?? [:]
-        s["domain"] = domain; s["loginUrl"] = u.absoluteString; s["policy"] = existing?["policy"] as? String ?? "ask"
+        var s: [String: Any] = (raw[key] as? [String: Any]) ?? existing ?? [:]
+        s["domain"] = s["domain"] as? String ?? domain
+        s["loginUrl"] = s["loginUrl"] as? String ?? u.absoluteString
+        s["policy"] = s["policy"] as? String ?? "ask"
         if !note.isEmpty { s["note"] = note }
         if s["selectors"] == nil { s["selectors"] = [String: String]() }
         if s["createdAt"] == nil { s["createdAt"] = iso.string(from: Date()) }
         raw[key] = s
         do { try saveSites() } catch { return "Secret enregistré mais sites.json inaccessible : \(error.localizedDescription)" }
-        log(site: key, action: existing == nil ? "add_site" : "update_site", result: "ok", detail: "\(domain), politique \(s["policy"] ?? "ask"), saisi dans la barre des menus")
+        log(site: key, action: existing == nil ? "add_site" : "update_site", result: "ok", detail: "\(s["domain"] ?? domain), politique \(s["policy"] ?? "ask"), saisi dans l'app Sésame")
         loadSites()
         lastError = nil
         return nil
@@ -228,9 +259,9 @@ final class Store {
         guard FileManager.default.fileExists(atPath: chrome) else { lastError = "Google Chrome n'est pas dans /Applications."; return }
         let p = Process()
         p.executableURL = URL(fileURLWithPath: chrome)
-        p.arguments = ["--remote-debugging-port=9222", "--user-data-dir=\(chromeProfile.path)", "--no-first-run", "--no-default-browser-check", "--password-store=basic"]
+        p.arguments = ["--remote-debugging-port=9222", "--user-data-dir=\(chromeProfile.path)", "--no-first-run", "--no-default-browser-check", "--password-store=basic", "about:blank"]
         p.standardOutput = nil; p.standardError = nil
-        do { try p.run(); log(site: nil, action: "chrome_start", result: "ok", detail: "port 9222, depuis la barre des menus") }
+        do { try p.run(); log(site: nil, action: "chrome_start", result: "ok", detail: "port 9222, depuis l'app Sésame") }
         catch { lastError = "Impossible de lancer Chrome : \(error.localizedDescription)" }
         DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in self?.checkChrome() }
     }
@@ -249,6 +280,7 @@ final class Store {
         return (p.terminationStatus, s)
     }
 
+    /// Identique à normalizeName (src/config.js) : minuscules, tout le reste devient un tiret.
     static func normalize(_ name: String) -> String {
         let lowered = name.trimmingCharacters(in: .whitespaces).lowercased()
         let allowed = Set("abcdefghijklmnopqrstuvwxyz0123456789._-")
@@ -257,20 +289,21 @@ final class Store {
             if allowed.contains(ch) { out.append(ch); dash = false }
             else if !dash { out.append("-"); dash = true }
         }
-        return out.trimmingCharacters(in: CharacterSet(charactersIn: "-"))
+        return out
     }
 
-    static let authLabels: Set<String> = ["login", "auth", "accounts", "account", "sso", "id", "idp", "signin", "sign-in", "connect", "oauth", "secure", "my", "mon", "espace-client", "espaceclient", "identity", "authentification", "authentication", "portal", "compte", "moncompte", "customer", "client", "www"]
+    /// Même règle que siteDomainFor (src/config.js). Suffixes à deux niveaux : on garde trois labels.
+    static let twoLevelSuffixes: Set<String> = ["co.uk", "org.uk", "ac.uk", "gov.uk", "me.uk", "ltd.uk", "plc.uk", "com.au", "net.au", "org.au", "edu.au", "gov.au", "co.nz", "org.nz", "govt.nz", "co.jp", "ne.jp", "or.jp", "ac.jp", "go.jp", "com.br", "com.mx", "co.za", "com.ar", "asso.fr", "gouv.fr", "com.tr", "co.in", "net.in", "org.in", "com.sg", "com.hk", "com.cn", "net.cn", "org.cn", "gov.cn", "co.kr", "or.kr", "go.kr", "com.tw", "co.il", "org.il", "com.pl", "com.ua", "com.my", "com.ph", "com.vn", "com.eg", "com.sa", "com.co", "com.pe", "com.ve", "com.uy", "co.id", "com.pk", "com.bd", "com.ng", "co.ke", "com.gh"]
+    /// Hébergeurs mutualisés : chaque sous-domaine appartient à quelqu'un d'autre, on garde l'hôte entier.
+    static let sharedSuffixes: Set<String> = ["github.io", "gitlab.io", "pages.dev", "workers.dev", "herokuapp.com", "netlify.app", "vercel.app", "web.app", "firebaseapp.com", "appspot.com", "azurewebsites.net", "cloudfront.net", "amazonaws.com", "myshopify.com", "wordpress.com", "blogspot.com", "notion.site", "wixsite.com", "squarespace.com", "webflow.io", "glitch.me", "repl.co", "fly.dev", "onrender.com", "surge.sh", "ngrok.io", "ngrok-free.app", "trycloudflare.com", "github.com", "gitlab.com", "sharepoint.com", "google.com", "googleusercontent.com", "live.com", "apple.com", "icloud.com"]
 
-    static let twoLevelSuffixes: Set<String> = ["co.uk", "org.uk", "ac.uk", "gov.uk", "com.au", "net.au", "org.au", "co.nz", "co.jp", "com.br", "com.mx", "co.za", "com.ar", "asso.fr", "gouv.fr", "com.tr", "co.in", "com.sg", "com.hk"]
-
-    /// Même règle que src/config.js : le domaine enregistrable (particulier.edf.fr → edf.fr, login.infomaniak.com → infomaniak.com).
     static func siteDomain(for host: String) -> String {
         let h = host.lowercased()
         if h == "localhost" || h.range(of: #"^\d+\.\d+\.\d+\.\d+$"#, options: .regularExpression) != nil { return h }
         let parts = h.split(separator: ".").map(String.init)
         if parts.count <= 2 { return h }
-        let last2 = parts.suffix(2).joined(separator: ".")
-        return twoLevelSuffixes.contains(last2) ? parts.suffix(3).joined(separator: ".") : last2
+        let last2 = parts.suffix(2).joined(separator: "."), last3 = parts.suffix(3).joined(separator: ".")
+        if sharedSuffixes.contains(last2) || sharedSuffixes.contains(last3) { return h }
+        return twoLevelSuffixes.contains(last2) ? last3 : last2
     }
 }

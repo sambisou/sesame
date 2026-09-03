@@ -50,9 +50,6 @@ export function hostnameOf(url) {
   try { return new URL(url).hostname.replace(/^www\./, ""); } catch { return null; }
 }
 
-// Sous-domaines typiques d'une page de connexion : le site « vit » un cran au-dessus
-// (login.infomaniak.com → infomaniak.com), sinon l'onglet après connexion ne serait plus reconnu.
-const AUTH_LABELS = new Set(["login", "auth", "accounts", "account", "sso", "id", "idp", "signin", "sign-in", "connect", "oauth", "secure", "my", "mon", "espace-client", "espaceclient", "identity", "authentification", "authentication", "portal", "compte", "moncompte", "customer", "client"]);
 /** Une page de connexion doit être en HTTPS (127.0.0.1 / localhost tolérés pour les bancs d'essai). Lève une erreur sinon. */
 export function assertLoginUrl(url) {
   let u;
@@ -72,14 +69,22 @@ const TWO_LEVEL_SUFFIXES = new Set(["co.uk", "org.uk", "ac.uk", "gov.uk", "com.a
  * infomaniak.com). Les flux de connexion sautent presque toujours d'un sous-domaine à l'autre
  * (espace-client., login., sso.) : c'est ce périmètre que Sésame accepte, jamais un autre domaine.
  */
+// Hébergeurs mutualisés et grands domaines à sous-domaines indépendants : chaque sous-domaine appartient à
+// quelqu'un d'autre, le périmètre du site reste l'hôte entier (sinon foo.github.io ouvrirait bar.github.io).
+const SHARED_SUFFIXES = new Set(["github.io", "gitlab.io", "pages.dev", "workers.dev", "herokuapp.com", "netlify.app", "vercel.app", "web.app", "firebaseapp.com", "appspot.com", "azurewebsites.net", "cloudfront.net", "amazonaws.com", "myshopify.com", "wordpress.com", "blogspot.com", "notion.site", "wixsite.com", "squarespace.com", "webflow.io", "glitch.me", "repl.co", "fly.dev", "onrender.com", "surge.sh", "ngrok.io", "ngrok-free.app", "trycloudflare.com", "github.com", "gitlab.com", "sharepoint.com", "google.com", "googleusercontent.com", "live.com", "apple.com", "icloud.com"]);
+const MORE_TWO_LEVEL = ["me.uk", "ltd.uk", "plc.uk", "edu.au", "gov.au", "org.nz", "govt.nz", "ne.jp", "or.jp", "ac.jp", "go.jp", "net.in", "org.in", "com.cn", "net.cn", "org.cn", "gov.cn", "co.kr", "or.kr", "go.kr", "com.tw", "co.il", "org.il", "com.pl", "com.ua", "com.my", "com.ph", "com.vn", "com.eg", "com.sa", "com.co", "com.pe", "com.ve", "com.uy", "co.id", "com.pk", "com.bd", "com.ng", "co.ke", "com.gh"];
+for (const s of MORE_TWO_LEVEL) TWO_LEVEL_SUFFIXES.add(s);
+
+/** Périmètre d'un site : son domaine enregistrable (particulier.edf.fr → edf.fr), sauf hébergeurs mutualisés (hôte entier). */
 export function siteDomainFor(url) {
   const h = hostnameOf(url);
   if (!h) return null;
   if (/^\d+\.\d+\.\d+\.\d+$/.test(h) || h === "localhost") return h;
   const parts = h.split(".");
   if (parts.length <= 2) return h;
-  const last2 = parts.slice(-2).join(".");
-  return TWO_LEVEL_SUFFIXES.has(last2) ? parts.slice(-3).join(".") : last2;
+  const last2 = parts.slice(-2).join("."), last3 = parts.slice(-3).join(".");
+  if (SHARED_SUFFIXES.has(last2) || SHARED_SUFFIXES.has(last3)) return h;
+  return TWO_LEVEL_SUFFIXES.has(last2) ? last3 : last2;
 }
 
 /** Le site correspond-il à cette URL d'onglet ? (domaine ou sous-domaine) */

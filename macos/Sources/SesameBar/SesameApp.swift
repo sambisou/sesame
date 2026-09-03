@@ -12,13 +12,13 @@ struct SesameApp: App {
             SeedIcon.exportIconset(to: args[i + 1])
             exit(0)
         }
-        // Une seule graine dans la barre des menus : si une autre instance tourne déjà, on la laisse et on s'efface.
+        // Une seule graine dans la barre des menus, et c'est la version la plus récente qui survit :
+        // une instance déjà en vie est priée de se terminer (réinstallation), la nouvelle prend sa place.
         let me = ProcessInfo.processInfo.processIdentifier
         let others = NSRunningApplication.runningApplications(withBundleIdentifier: "app.sesamekey.bar").filter { $0.processIdentifier != me }
-        if !others.isEmpty {
-            others.first?.activate()
-            exit(0)
-        }
+        for o in others { o.terminate() }
+        if !others.isEmpty { usleep(600_000) }
+        for o in others where !o.isTerminated { o.forceTerminate() }
     }
 
     var body: some Scene {

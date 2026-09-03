@@ -20,6 +20,9 @@ echo
 if [ $status -eq 0 ]; then
   if [ -d "macos/build/Sésame.app" ]; then
     echo "Installing the menu bar app / Installation de l'app de la barre des menus…"
+    osascript -e 'tell application id "app.sesamekey.bar" to quit' >/dev/null 2>&1
+    for i in 1 2 3 4 5 6; do pgrep -xq SesameBar || break; sleep 0.5; done
+    pkill -x SesameBar 2>/dev/null; sleep 0.5
     rm -rf "/Applications/Sésame.app" 2>/dev/null
     if cp -R "macos/build/Sésame.app" /Applications/ 2>/dev/null; then
       xattr -dr com.apple.quarantine "/Applications/Sésame.app" 2>/dev/null || true

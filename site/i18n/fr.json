@@ -1,0 +1,223 @@
+{
+  "meta": {
+    "title": "Sésame — vos mots de passe restent chez vous, Claude fait le reste",
+    "description": "Sésame ouvre vos comptes à la place de Claude, sans jamais lui montrer un identifiant. Local, chiffré dans le Trousseau macOS, vous validez chaque accès. Gratuit."
+  },
+  "og": {
+    "title": "Sésame",
+    "description": "Vos mots de passe restent chez vous. Claude fait le reste."
+  },
+  "nav": {
+    "ariaLabel": "Principale",
+    "langSwitcherLabel": "Changer de langue",
+    "how": "Comment ça marche",
+    "flow": "Écran par écran",
+    "security": "Sécurité",
+    "compat": "Compatibilité",
+    "faq": "Questions",
+    "download": "Télécharger"
+  },
+  "hero": {
+    "title": "Vos mots de passe restent chez vous. <em>Claude fait le reste.</em>",
+    "lede": "Sésame ouvre vos comptes à la place de Claude, automatiquement, sans jamais lui montrer un identifiant. Pour les sites sensibles, vous validez d'un clic. Tout reste sur votre Mac, dans le Trousseau d'Apple.",
+    "ctaDownload": "Télécharger pour Mac",
+    "ctaHow": "Voir comment ça marche",
+    "note": "Gratuit. Sans compte. Sans serveur. macOS 13 ou plus récent."
+  },
+  "demo": {
+    "ariaLabel": "Comment Claude se connecte à un site avec Sésame, en 4 étapes",
+    "dotsAriaLabel": "Aller à l'étape",
+    "countFormat": "Étape {n} sur {total}",
+    "dotLabelFormat": "Étape {n} · {title}",
+    "prev": "← Précédent",
+    "next": "Suivant →",
+    "step1": {
+      "title": "Claude demande",
+      "text": "Claude appelle l'outil <code>sesame_login(\"edf\")</code> avec un motif : « récupérer la facture d'août »."
+    },
+    "step2": {
+      "title": "Automatique, ou vous validez",
+      "text": "Sur un site en Automatique, rien à faire : Sésame se connecte tout seul. Sur un site « Me demander », une seule fenêtre apparaît, celle de Sésame : Autoriser ou Refuser."
+    },
+    "step3": {
+      "title": "Sésame remplit",
+      "text": "Sésame tape identifiant et mot de passe dans le site, dans Chrome. Le mot de passe ne quitte pas le Mac. Si un code est demandé, c'est vous qui le tapez."
+    },
+    "step4": {
+      "title": "Claude continue",
+      "text": "Claude reçoit seulement « fait », jamais un identifiant. Le journal garde une ligne."
+    },
+    "illus": {
+      "dim": "motif : récupérer la facture d'août",
+      "autoOk": "✓ Automatique : rien à faire",
+      "autoException": "sauf sur un site réglé sur « Me demander »",
+      "dialogTitle": "Sésame — demande d'accès",
+      "dialogBody": "<strong>Claude</strong> veut se connecter sur <strong>edf</strong>.",
+      "dialogDeny": "Refuser",
+      "dialogAllow": "Autoriser",
+      "fillIdLabel": "Identifiant",
+      "fillPwLabel": "Mot de passe",
+      "fillEmail": "martine@example.fr",
+      "fillNote": "Le mot de passe ne quitte pas le Mac",
+      "doneOk": "✓ fait",
+      "doneJournal": "09:28:35 · edf · connexion · réussi",
+      "doneNote": "Claude ne reçoit jamais un identifiant"
+    }
+  },
+  "sees": {
+    "eyebrow": "Le principe",
+    "title": "Claude ne reçoit jamais votre mot de passe. Il n'a même pas de commande pour le demander.",
+    "lede": "Automatique par défaut : Sésame se connecte pour Claude sans que vous ayez à cliquer, sauf sur les sites que vous réglez sur « Me demander ». Dans tous les cas, aucune commande ne renvoie un secret : Claude obtient trois réponses possibles, et rien d'autre. Le mot de passe est tapé dans la page par Sésame, jamais montré.",
+    "yesTitle": "Ce que Claude reçoit",
+    "yes1": "<code>fait</code> — le formulaire est rempli, la session est ouverte",
+    "yes2": "<code>refusé</code> — vous avez dit non, ou l'accès est coupé",
+    "yes3": "<code>échec</code> — le site a résisté, sans jamais dire pourquoi en détail",
+    "yes4": "La liste des sites que vous avez enregistrés, par nom",
+    "yes5": "Le journal des accès, en lecture seule",
+    "noTitle": "Ce que Claude ne reçoit jamais",
+    "no1": "Votre identifiant",
+    "no2": "Votre mot de passe, même masqué, même partiel",
+    "no3": "Le contenu des champs, y compris dans les messages d'erreur",
+    "no4": "Le droit d'effacer une ligne du journal",
+    "no5": "Le droit d'ajouter un site sans vous"
+  },
+  "how": {
+    "eyebrow": "Comment ça marche",
+    "title": "Trois gestes, et plus jamais un mot de passe à taper devant Claude.",
+    "step1Title": "Installez Sésame",
+    "step1Body": "Téléchargez l'archive, ouvrez-la, et double-cliquez sur « Install Sesame ». L'installateur se présente à Claude tout seul et pose une petite graine dans la barre des menus. La première fois, macOS demande un clic droit puis « Ouvrir ».",
+    "step2Title": "Ajoutez un site",
+    "step2Body": "Cliquez sur la graine, « Ajouter un site », tapez votre identifiant et votre mot de passe une seule fois. Ils partent dans le Trousseau d'Apple, chiffrés. Choisissez sa règle : Automatique pour ne plus rien valider, ou Me demander pour les sites sensibles.",
+    "step3Title": "Demandez à Claude",
+    "step3Body": "En Automatique, Sésame remplit le formulaire tout seul dans votre navigateur : rien à valider. Sur un site « Me demander », une fenêtre vous demande votre accord d'abord. Claude continue son travail.",
+    "step3Say": "« Connecte-toi sur EDF et récupère la facture d'août. »"
+  },
+  "flow": {
+    "eyebrow": "Écran par écran",
+    "title": "Ce que vous verrez vraiment, sur votre Mac.",
+    "lede": "Des captures de Sésame tel qu'il est, pas des maquettes. Trois fenêtres au quotidien, une graine dans la barre des menus.",
+    "shot1Alt": "Le panneau Sésame dans la barre des menus : liste des sites avec leur règle, journal, bouton Bloquer",
+    "shot1Title": "1 · La graine dans la barre des menus.",
+    "shot1Body": "Vos sites, la règle de chacun (automatique, me demander, coupé), le journal des accès, le bouton « Bloquer » qui coupe tout, et le bouton pour ajouter un site.",
+    "shot2Alt": "La fenêtre Sésame qui demande identifiant et mot de passe pour un site, avec l'œil pour afficher le mot de passe",
+    "shot2Title": "2 · La fenêtre d'identifiants.",
+    "shot2Body": "Quand Claude a besoin d'un site que Sésame ne connaît pas, cette fenêtre s'ouvre : identifiant, mot de passe avec l'œil pour le relire, « Plus tard » ou « Enregistrer ». Le mot de passe part dans le Trousseau. Claude apprend seulement que le site est disponible.",
+    "shot3Alt": "La demande d'accès Sésame : qui demande, quel site, pourquoi, boutons Refuser et Autoriser",
+    "shot3Title": "3 · La demande d'accès, sur un site « Me demander ».",
+    "shot3Body": "Qui demande, quel site, pourquoi. « Refuser » est le bouton par défaut. Le Trousseau d'Apple, lui, ne demande rien pour un site enregistré depuis la 0.5.1 ; pour un site plus ancien, une seule fois, lors de <code>sesame migrate-keychain</code>.",
+    "shot4Alt": "Le bandeau Sésame en haut de la page qui attend la saisie du code reçu par e-mail ou SMS",
+    "shot4Title": "4 · Le code, c'est vous.",
+    "shot4Body": "Si le site envoie un code par SMS, e-mail ou application, un bandeau apparaît en haut de la page et Sésame attend. Vous tapez le code, le site l'accepte, Claude reprend."
+  },
+  "chrome": {
+    "eyebrow": "Le navigateur",
+    "title": "Pourquoi une fenêtre Chrome à part, et comment on s'en passe.",
+    "lede": "Depuis sa version 136, Chrome interdit à tout programme de piloter votre profil habituel. C'est une protection contre les logiciels malveillants, et Sésame la respecte. Voici ce que ça change, et ce qu'on a fait pour que ça ne se voie presque pas.",
+    "todayTitle": "Aujourd'hui : un Chrome Sésame, discret",
+    "today1": "Sésame lance lui-même un Chrome avec son propre profil, réduit dans le Dock. Vous n'avez rien à ouvrir.",
+    "today2": "Il reste en arrière-plan pendant la connexion et ne se déplie que si un site attend un code de votre part.",
+    "today3": "Vos sessions y restent ouvertes : une fois connecté à EDF, plus besoin de Sésame jusqu'à expiration.",
+    "today4": "Rien d'autre n'y est installé : aucune extension tierce ne peut y observer ce que Sésame tape.",
+    "extTitle": "Disponible : l'extension, dans votre Chrome habituel",
+    "ext1": "L'extension Sésame (bêta) remplit le formulaire directement dans votre Chrome de tous les jours. Plus de fenêtre à part.",
+    "ext2": "Installation depuis la graine : menu Sésame → « Navigateur » → « Installer… ». Sésame ouvre <code>chrome://extensions</code> et active le mode développeur pour vous.",
+    "ext3": "Chargez le dossier <code>extension/</code>, copiez l'ID affiché sous son nom, collez-le dans Sésame et cliquez « Relier ».",
+    "ext4": "Elle reçoit les identifiants par le canal de messagerie native de Chrome, un tuyau local entre l'extension et Sésame. Rien ne passe par le réseau, l'extension ne stocke rien. Sésame la choisit dès qu'elle répond, sinon le Chrome à part.",
+    "ext5": "Limite honnête : dans votre Chrome habituel, une autre extension ayant accès à la page pourrait observer la frappe, comme elle pourrait vous observer vous-même. Le Chrome dédié n'a pas cette exposition. À vous de choisir."
+  },
+  "security": {
+    "eyebrow": "Sécurité",
+    "title": "Construit comme Apple le ferait : local, chiffré, sous votre contrôle.",
+    "lede": "Vous choisissez : automatique, ou validation à chaque fois pour les sites sensibles. Et un bouton Bloquer qui coupe tout, à tout moment.",
+    "item1Title": "Le Trousseau d'Apple, pas un coffre maison",
+    "item1Body": "Sésame confie vos secrets au Trousseau macOS, le même qui garde vos mots de passe Safari et vos clés Wi-Fi. Chiffrement d'Apple, protégé par votre session et, sur les Mac récents, par la puce de sécurité.",
+    "item2Title": "Rien ne quitte votre Mac",
+    "item2Body": "Pas de cloud, pas de compte Sésame, pas de synchronisation cachée. Le secret ne circule qu'entre le Trousseau et votre navigateur, sur la même machine.",
+    "item3Title": "Vous choisissez, site par site",
+    "item3Body": "Automatique : Claude se connecte sans rien vous demander. Me demander : chaque connexion passe par une fenêtre Sésame qui dit qui, quel site, pourquoi. Vous changez d'avis en un clic, site par site.",
+    "item4Title": "Un journal que Claude ne peut pas effacer",
+    "item4Body": "Chaque demande est notée : qui, quand, quel site, autorisé ou refusé, réussi ou non. Claude peut le lire pour vous rendre compte. Il ne peut pas y toucher.",
+    "item5Title": "Un bouton Bloquer",
+    "item5Body": "Dans la barre de menus, il coupe toutes les connexions d'un coup, quel que soit le site, le temps que vous le souhaitez.",
+    "vaultEyebrow": "Sur votre Mac",
+    "vaultTitle": "Où vit chaque chose",
+    "vaultBody": "Sésame sépare ce qui est secret de ce qui ne l'est pas. Seule la première colonne est chiffrée, et c'est la seule qui compte.",
+    "kv1Label": "Identifiants et mots de passe",
+    "kv1Value": "Trousseau macOS",
+    "kv2Label": "Liste des sites, règles d'accès",
+    "kv2Value": "fichier local, sans secret",
+    "kv3Label": "Journal des accès",
+    "kv3Value": "fichier local, ajout seul",
+    "kv4Label": "Sessions ouvertes (cookies)",
+    "kv4Value": "navigateur dédié",
+    "kv5Label": "Ce qui part sur Internet",
+    "kv5Value": "rien"
+  },
+  "compat": {
+    "eyebrow": "Compatibilité",
+    "title": "Fait pour Claude. Ouvert aux autres.",
+    "lede": "Sésame parle le protocole MCP, le standard ouvert par lequel les assistants utilisent des outils. Claude le comprend aujourd'hui. Les autres suivront, sans rien changer à vos mots de passe.",
+    "chip1": "Claude Desktop et Cowork",
+    "chip2": "Claude Code",
+    "chip3": "Claude dans Chrome",
+    "chip4": "Extension Chrome (bêta) : votre Chrome habituel, sans fenêtre à part",
+    "chip5": "Cursor, VS Code, Windsurf · compatible, non testé",
+    "chip6": "Codex CLI, Gemini CLI · compatible, non testé",
+    "chip7": "ChatGPT · via connecteur distant, non testé"
+  },
+  "control": {
+    "eyebrow": "Contrôle",
+    "title": "Site par site. Accès par accès.",
+    "sitesTitle": "Vos sites",
+    "theadSite": "Site",
+    "theadRule": "Règle",
+    "theadLastAccess": "Dernier accès",
+    "row1Policy": "automatique",
+    "row1LastAccess": "hier, 18:02",
+    "row2Policy": "me demander",
+    "row2LastAccess": "aujourd'hui, 09:28",
+    "row3Name": "Impôts",
+    "row3Policy": "accès coupé",
+    "row3LastAccess": "il y a 12 jours",
+    "journalTitle": "Le journal",
+    "journalLog": "<b>09:28:32</b>  edf   demande   Claude Code   <span class=\"ok\">autorisé</span>  validé par vous\n<b>09:28:35</b>  edf   connexion Claude Code   <span class=\"ok\">réussi</span>    tableau de bord ouvert\n<b>18:02:10</b>  ovh   connexion Cowork        <span class=\"ok\">réussi</span>    règle automatique\n<b>11:40:03</b>  impots demande  Cowork        <span class=\"no\">refusé</span>    accès coupé\n<b>11:39:51</b>  impots demande  Cowork        <span class=\"no\">refusé</span>    vous avez dit non",
+    "journalFootnote": "Chaque ligne dit qui a demandé, pour quel site, et ce que vous avez répondu. Rien n'y est jamais effacé."
+  },
+  "faq": {
+    "eyebrow": "Questions",
+    "title": "Ce qu'on nous demande le plus.",
+    "q1Question": "Sésame envoie-t-il mes mots de passe quelque part ?",
+    "q1Answer": "Non. Ils sont dans le Trousseau d'Apple sur votre Mac, et n'en sortent que pour être tapés dans votre navigateur, sur la même machine. Sésame n'a pas de serveur, pas de compte, pas de statistiques.",
+    "q2Question": "Et Claude, il pourrait tricher pour obtenir un mot de passe ?",
+    "q2Answer": "Il n'a pas de commande pour ça. Sésame ne lui propose que « connecte-toi », « liste les sites », « lis le journal ». Même en insistant, la seule chose qu'il obtient est « fait », « refusé » ou « échec ».",
+    "q3Question": "Pourquoi une deuxième fenêtre Chrome ?",
+    "q3Answer": "Chrome refuse depuis sa version 136 qu'un programme pilote votre profil habituel. Sésame utilise donc, par défaut, un Chrome à profil séparé, qu'il lance lui-même, réduit, et qu'il ne déplie que pour un code. Vous pouvez vous en passer avec l'extension Chrome (bêta) : elle remplit le formulaire directement dans votre Chrome habituel, sans deuxième fenêtre.",
+    "q4Question": "Pourquoi mon Mac me demande-t-il mon mot de passe de session ?",
+    "q4Answer": "Pour un site enregistré depuis la 0.5.1, il ne le demande pas : l'assistant Trousseau de Sésame crée et relit lui-même l'élément, en silence, dès le premier accès. Pour un site plus ancien, une seule commande règle ça pour de bon : <code>sesame migrate-keychain</code> — une fenêtre du Trousseau par site, vous cliquez « Autoriser », et c'est terminé.",
+    "q5Question": "Comment installer l'extension Chrome ?",
+    "q5Answer": "Depuis la graine dans la barre des menus : « Navigateur » puis « Installer… ». Sésame ouvre <code>chrome://extensions</code> et active le mode développeur pour vous ; chargez le dossier <code>extension/</code>, copiez l'ID affiché sous son nom, collez-le dans Sésame et cliquez « Relier ». Sésame confirme quand la connexion est active. C'est une bêta : dans votre Chrome habituel, une autre extension ayant accès à la page pourrait en théorie observer la frappe, comme elle pourrait vous observer vous-même.",
+    "q6Question": "Et les codes par SMS ou l'application d'authentification ?",
+    "q6Answer": "Ils restent entre vos mains. Quand un site en demande un, Sésame vous prévient, affiche « J'attends votre code » en haut de la page, et patiente pendant que vous le tapez. La connexion ne reprend qu'une fois le code accepté. C'est voulu : le deuxième facteur, c'est vous.",
+    "q7Question": "Que se passe-t-il si je perds mon Mac ?",
+    "q7Answer": "Les secrets sont dans le Trousseau, protégés par votre session macOS et le chiffrement du disque. Sans votre mot de passe de session, ils sont illisibles. Changez tout de même vos mots de passe, comme pour n'importe quel ordinateur perdu.",
+    "q8Question": "Combien ça coûte ?",
+    "q8Answer": "Rien. Sésame est gratuit et son code est ouvert : n'importe qui peut vérifier qu'il fait exactement ce qui est écrit ici."
+  },
+  "dl": {
+    "eyebrow": "Téléchargement",
+    "title": "Ouvrez Sésame.",
+    "lede": "Une application, un glisser-déposer, et Claude se connecte pour vous. Sans jamais savoir comment.",
+    "cta": "Télécharger Sésame pour Mac",
+    "versionLabel": "Version",
+    "versionValue": "0.5.1 · prototype, archive zip avec l'app de la barre des menus",
+    "reqLabel": "Prérequis",
+    "reqValue": "macOS 13 ou plus récent, Google Chrome, Node.js 20 ou plus récent",
+    "priceLabel": "Prix",
+    "priceValue": "Gratuit, code ouvert"
+  },
+  "footer": {
+    "tagline": "Sésame · fait en Alsace",
+    "meta": "sesamekey.app · <a href=\"https://github.com/sambisou/sesame\" rel=\"noopener\">Code ouvert</a> · Aucune donnée collectée",
+    "privacyLink": "Confidentialité"
+  }
+}

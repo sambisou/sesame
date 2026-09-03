@@ -1,16 +1,17 @@
 <!doctype html>
-<html lang="fr">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="light dark">
-<title>Sésame — politique de confidentialité</title>
-<meta name="description" content="Sésame ne collecte aucune donnée : ni analytique, ni télémétrie, ni identifiant transmis à un serveur. Tout reste sur votre Mac.">
-<meta property="og:title" content="Sésame — politique de confidentialité">
-<meta property="og:description" content="Aucune donnée collectée. Rien ne quitte votre Mac.">
+<title>Sésame — privacy policy</title>
+<meta name="description" content="Sésame collects no data: no analytics, no telemetry, no credential ever sent to a server. Everything stays on your Mac.">
+<meta property="og:title" content="Sésame — privacy policy">
+<meta property="og:description" content="No data collected. Nothing leaves your Mac.">
 <meta property="og:type" content="website">
-<meta property="og:url" content="https://sesamekey.app/privacy.html">
-<link rel="canonical" href="https://sesamekey.app/privacy.html">
+<meta property="og:locale" content="en_US">
+<meta property="og:url" content="https://sesamekey.app/privacy">
+<link rel="canonical" href="https://sesamekey.app/privacy">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cpath d='M32 3C46 14 54 27 54 41c0 13-10 20-22 20S10 54 10 41c0-14 8-27 22-38z' fill='%23C48A22'/%3E%3Cpath fill-rule='evenodd' d='M32 24a7 7 0 1 1 0 14 7 7 0 1 1 0-14zm-2.6 12h5.2l2.4 12h-10z' fill='%231A1714'/%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500..700&family=Instrument+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
@@ -31,9 +32,6 @@
   .brand span { font-family:"Bricolage Grotesque",sans-serif; font-weight:700; font-size:1.1rem; color:var(--ink); letter-spacing:-.02em; }
   .eyebrow { font-size:.75rem; font-weight:600; letter-spacing:.12em; text-transform:uppercase; color:var(--seed-2); margin-bottom:10px; }
   .lede { color:var(--ink-2); font-size:1.05rem; }
-  .summary { margin-top:28px; border-radius:16px; background:var(--ink); color:var(--bg); padding:22px 26px; }
-  .summary .tag { font-size:.72rem; font-weight:600; letter-spacing:.1em; text-transform:uppercase; color:var(--seed); }
-  .summary p { color:color-mix(in srgb, var(--bg) 82%, transparent); margin-top:8px; max-width:none; }
   .mono { font-family:"JetBrains Mono",ui-monospace,Menlo,monospace; font-size:.88em; }
   code { font-family:"JetBrains Mono",ui-monospace,Menlo,monospace; font-size:.88em; background:var(--bg-2); padding:1px 6px; border-radius:5px; }
   ul { margin:10px 0 0; padding-left:20px; } li { margin:7px 0; color:var(--ink-2); }
@@ -55,63 +53,58 @@
     <span>Sésame</span>
   </a>
 
-  <p class="eyebrow">Politique de confidentialité · mise à jour le 3 septembre 2026</p>
-  <h1>Aucune donnée collectée. Rien ne quitte votre Mac.</h1>
-  <p class="lede">Cette page couvre Sésame dans son ensemble — le serveur MCP, la CLI, l'app de la barre des menus, et l'extension Chrome « Sésame » (bêta). Elle est écrite pour être lue avant d'installer l'extension depuis le Chrome Web Store, mais s'applique à tout le projet.</p>
+  <p class="eyebrow">Privacy policy · last updated September 3, 2026</p>
+  <h1>No data collected. Nothing leaves your Mac.</h1>
+  <p class="lede">This page covers Sésame as a whole — the MCP server, the CLI, the menu bar app, and the "Sésame" Chrome extension (beta). It's written to be read before installing the extension from the Chrome Web Store, but it applies to the whole project. (Version française : <a href="https://sesamekey.app/fr/privacy">sesamekey.app/fr/privacy</a>.)</p>
 
-  <div class="summary">
-    <p class="tag">English summary</p>
-    <p>Sésame collects nothing. It runs entirely on your Mac: no analytics, no telemetry, no remote server, no account. Credentials live only in the macOS Keychain. The Chrome extension stores nothing itself, sends what it types nowhere but back to the local bridge process on your machine, and never reads back a field's value. The AI model that requests a login never receives a credential — only a done / refused / failed result. See the sections below (in French) for exactly what each permission is for; the tables and headings are self-explanatory even without reading French.</p>
-  </div>
+  <h2>What Sésame collects</h2>
+  <p><b>Nothing.</b> No analytics, no telemetry, no account, no remote server. Sésame is local software: the MCP server, CLI, menu bar app, and Chrome extension all run on your Mac and only ever talk to each other, never to a third-party service. There's no outbound network request tied to your credentials — the only network traffic anywhere in the project is what you yourself trigger by browsing in Chrome.</p>
 
-  <h2>Ce que Sésame collecte</h2>
-  <p><b>Rien.</b> Pas d'analytique, pas de télémétrie, pas de compte, pas de serveur distant. Sésame est un logiciel local : serveur MCP, CLI, app de menu bar et extension Chrome tournent tous sur votre Mac et ne parlent qu'entre eux, jamais à un service tiers. Il n'y a aucune requête réseau sortante liée à vos identifiants — la seule sortie réseau de tout le projet est celle que vous initiez vous-même en naviguant dans Chrome.</p>
+  <h2>Where your credentials go</h2>
+  <p>A credential you save (<code>sesame add</code>, the app's own window, or <code>sesame_request_site</code> at Claude's request) goes straight into the <b>macOS Keychain</b> (service <code>sesame</code>), encrypted by the system. Sésame keeps no copy of it anywhere else: no file, no cache, no log ever contains a password.</p>
+  <p>At login time, the password is read from the Keychain, typed into the login page (a dedicated-profile Chrome, or the extension in your everyday Chrome — see below), then cleared from the memory of the process that handled it. It never passes through any third party, nor through the AI model: Sésame's MCP tools never return a username or password, only a result ("done," "denied," "failed") and descriptive step labels.</p>
 
-  <h2>Où vont vos identifiants</h2>
-  <p>Un identifiant que vous enregistrez (<code>sesame add</code>, la fenêtre de l'app, ou <code>sesame_request_site</code> à la demande de Claude) part directement dans le <b>Trousseau macOS</b> (service <code>sesame</code>), chiffré par le système. Sésame n'en garde aucune copie ailleurs : pas de fichier, pas de cache, pas de journal contenant un mot de passe.</p>
-  <p>Au moment d'une connexion, le mot de passe est lu depuis le Trousseau, tapé dans la page de connexion (Chrome à profil dédié, ou l'extension dans votre Chrome habituel — voir plus bas), puis effacé de la mémoire du processus qui l'a manipulé. Il ne transite par aucun tiers, ni par le modèle d'IA : les outils MCP de Sésame ne renvoient jamais un identifiant ou un mot de passe, seulement un résultat (« fait », « refusé », « échec ») et des étapes descriptives.</p>
+  <h2>The "Sésame" Chrome extension</h2>
+  <p>The extension stores no persistent data: it keeps no credential, no password, no browsing history. It receives a username and password for a single fill operation, types them into the page, and never reads them back (it only returns step labels like "password filled," never the value). It talks exclusively to a local process, the Sésame native bridge, via Chrome's native messaging channel — a browser mechanism, not a network request.</p>
+  <p>The verification code (2nd factor) is always typed by you, by hand; the extension waits for it, it never reads it.</p>
 
-  <h2>L'extension Chrome « Sésame »</h2>
-  <p>L'extension ne stocke aucune donnée persistante : elle ne conserve ni identifiant, ni mot de passe, ni historique de navigation. Elle reçoit un identifiant et un mot de passe pour une seule opération de remplissage, les tape dans la page, et ne les relit jamais (elle ne renvoie que des libellés d'étapes comme « mot de passe rempli », jamais la valeur). Elle communique exclusivement avec un processus local, le pont natif Sésame, via le canal de messagerie native de Chrome — un mécanisme du navigateur, pas une requête réseau.</p>
-  <p>Le code de vérification (2e facteur) est toujours saisi par vous, au clavier ; l'extension attend, elle ne le lit jamais.</p>
-
-  <h2>Permissions demandées et pourquoi</h2>
+  <h2>Permissions requested, and why</h2>
   <div class="tw"><table>
-    <thead><tr><th>Permission</th><th>Pourquoi</th></tr></thead>
+    <thead><tr><th>Permission</th><th>Why</th></tr></thead>
     <tbody>
-      <tr><td>nativeMessaging</td><td>Parler au pont local Sésame (processus sur votre Mac), pour recevoir une demande de remplissage et renvoyer un résultat.</td></tr>
-      <tr><td>tabs</td><td>Trouver un onglet déjà ouvert sur le domaine du site demandé, ou en ouvrir un nouveau sur sa page de connexion.</td></tr>
-      <tr><td>scripting</td><td>Injecter le script de remplissage dans la page, à la demande seulement — jamais déclaré en permanence sur tous les sites.</td></tr>
-      <tr><td>activeTab</td><td>Agir sur l'onglet concerné au moment de la demande.</td></tr>
-      <tr><td>storage</td><td>Retenir l'état de la connexion au pont pour l'affichage du popup — jamais un identifiant.</td></tr>
-      <tr><td>host_permissions : &lt;all_urls&gt;</td><td>Le site à remplir peut être n'importe lequel de ceux que vous enregistrez dans Sésame ; l'extension ne peut pas savoir à l'avance lesquels. Elle n'agit que sur l'onglet visé par une demande explicite, jamais en arrière-plan sur les autres.</td></tr>
+      <tr><td>nativeMessaging</td><td>Talk to the local Sésame bridge (a process on your Mac), to receive a fill request and return a result.</td></tr>
+      <tr><td>tabs</td><td>Find a tab already open on the requested site's domain, or open a new one on its login page.</td></tr>
+      <tr><td>scripting</td><td>Inject the fill script into the page, on request only — never declared permanently on every site.</td></tr>
+      <tr><td>activeTab</td><td>Act on the tab in question at the moment of the request.</td></tr>
+      <tr><td>storage</td><td>Remember the bridge's connection state for the popup's display — never a credential.</td></tr>
+      <tr><td>host_permissions: &lt;all_urls&gt;</td><td>The site to fill in can be any one of those you save in Sésame; the extension can't know in advance which. It only acts on the tab targeted by an explicit request, never in the background on the others.</td></tr>
     </tbody>
   </table></div>
 
-  <h2>Ce qui reste sur votre Mac</h2>
+  <h2>What stays on your Mac</h2>
   <ul>
-    <li><span class="pill">Trousseau macOS</span> les identifiants et mots de passe, chiffrés par le système.</li>
-    <li><span class="pill">~/.sesame/sites.json</span> la liste des sites enregistrés (nom, domaine, politique) — jamais un secret.</li>
-    <li><span class="pill">~/.sesame/journal.jsonl</span> le journal d'accès (qui, quand, quel résultat) — jamais une valeur de champ.</li>
-    <li><span class="pill">~/.sesame/bridge.sock</span> la socket locale du pont de l'extension, accessible uniquement par votre compte (mode 0600).</li>
-    <li><span class="pill">~/.sesame/chrome-profile</span> le profil du Chrome dédié, si vous l'utilisez plutôt que l'extension.</li>
+    <li><span class="pill">macOS Keychain</span> usernames and passwords, encrypted by the system.</li>
+    <li><span class="pill">~/.sesame/sites.json</span> the list of saved sites (name, domain, policy) — never a secret.</li>
+    <li><span class="pill">~/.sesame/journal.jsonl</span> the access log (who, when, what result) — never a field value.</li>
+    <li><span class="pill">~/.sesame/bridge.sock</span> the extension bridge's local socket, accessible only by your account (mode 0600).</li>
+    <li><span class="pill">~/.sesame/chrome-profile</span> the dedicated Chrome's profile, if you use it instead of the extension.</li>
   </ul>
-  <p>Rien de tout cela n'est synchronisé, sauvegardé sur un serveur, ou accessible depuis un autre appareil.</p>
+  <p>None of this is synced, backed up to a server, or accessible from another device.</p>
 
-  <h2>Ce que Sésame ne fait pas</h2>
+  <h2>What Sésame doesn't do</h2>
   <ul>
-    <li>Il ne vend ni ne partage aucune donnée : il n'y a personne à qui les vendre, tout reste local.</li>
-    <li>Il n'installe aucun outil d'analytique ou de suivi, dans l'extension comme ailleurs.</li>
-    <li>Il ne transmet aucun identifiant au modèle d'IA qui le sollicite (Claude ou tout autre client MCP).</li>
+    <li>It doesn't sell or share any data: there's no one to sell it to, everything stays local.</li>
+    <li>It doesn't install any analytics or tracking tool, in the extension or anywhere else.</li>
+    <li>It doesn't transmit any credential to the AI model requesting it (Claude or any other MCP client).</li>
   </ul>
-  <p>Les limites réelles — ce qu'une autre extension installée dans votre Chrome habituel pourrait observer, par exemple — sont documentées honnêtement dans <a href="https://github.com/sambisou/sesame/blob/main/SECURITY.md">SECURITY.md</a> (et sa version française <a href="https://github.com/sambisou/sesame/blob/main/SECURITY.fr.md">SECURITY.fr.md</a>), pas cachées derrière cette page.</p>
+  <p>The real limits — what another extension installed in your everyday Chrome could observe, for instance — are honestly documented in <a href="https://github.com/sambisou/sesame/blob/main/SECURITY.md">SECURITY.md</a> (and its French version, <a href="https://github.com/sambisou/sesame/blob/main/SECURITY.fr.md">SECURITY.fr.md</a>), not hidden behind this page.</p>
 
-  <h2>Contact et signalement</h2>
-  <p>Sésame est un projet personnel, gratuit, sous licence MIT, fourni tel quel et sans garantie. Pour signaler une faille de sécurité, utilisez l'onglet <b>Security → Report a vulnerability</b> du <a href="https://github.com/sambisou/sesame">dépôt GitHub</a> plutôt qu'une issue publique. Pour toute autre question sur cette politique, ouvrez une issue sur le même dépôt.</p>
+  <h2>Contact and reporting</h2>
+  <p>Sésame is a personal, free project, MIT-licensed, provided as-is with no warranty. To report a security vulnerability, use the <b>Security → Report a vulnerability</b> tab of the <a href="https://github.com/sambisou/sesame">GitHub repository</a> rather than a public issue. For any other question about this policy, open an issue on the same repository.</p>
 
   <footer>
-    <span>Sésame · fait en Alsace</span>
-    <span><a href="https://sesamekey.app/">sesamekey.app</a> · <a href="https://github.com/sambisou/sesame">Code ouvert</a> · Aucune donnée collectée</span>
+    <span>Sésame · made in Alsace, France</span>
+    <span><a href="https://sesamekey.app/">sesamekey.app</a> · <a href="https://github.com/sambisou/sesame">Open source</a> · No data collected</span>
   </footer>
 </div>
 </body>

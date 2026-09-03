@@ -1,4 +1,3 @@
-<title>Sésame</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Manrope:wght@600;700&family=Instrument+Sans:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400;500&display=swap">
 <style>
@@ -101,9 +100,10 @@
   .brand { display: flex; align-items: center; gap: 10px; text-decoration: none; }
   .brand svg { width: 30px; height: 30px; }
   .brand span { font-family: "Manrope", sans-serif; font-weight: 700; font-size: 1.25rem; letter-spacing: -0.02em; }
-  nav ul { display: flex; gap: 28px; list-style: none; margin: 0; padding: 0; font-size: .95rem; font-weight: 500; color: var(--ink-2); }
+  nav ul { display: flex; gap: 22px; list-style: none; margin: 0; padding: 0; font-size: .9rem; font-weight: 500; color: var(--ink-2); white-space: nowrap; }
   nav ul a { text-decoration: none; }
   nav ul a:hover { color: var(--ink); }
+  @media (max-width: 1180px) { nav ul .nav-hide-1180 { display: none; } }
   @media (max-width: 720px) { nav ul { display: none; } }
 
   /* Buttons */
@@ -291,6 +291,26 @@
 
   footer { padding: 48px 0 64px; color: var(--ink-3); font-size: .9rem; display: flex; justify-content: space-between; flex-wrap: wrap; gap: 16px; border-top: 1px solid var(--line); }
 
+  /* Nav : sélecteur de langue */
+  .nav-right { display: flex; align-items: center; gap: 18px; flex: none; }
+  .langselect {
+    font-family: inherit; font-size: .82rem; font-weight: 600; color: var(--ink-2);
+    background: var(--card); border: 1px solid var(--line); border-radius: 8px;
+    padding: 6px 10px; cursor: pointer; appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%237C746A' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+    background-repeat: no-repeat; background-position: right 8px center; background-size: 14px;
+    padding-right: 26px;
+  }
+  .langselect:hover { border-color: var(--ink-3); }
+  .langselect:focus-visible { outline: 3px solid var(--seed); outline-offset: 2px; }
+
+  /* Note : captures d'écran en français sur les pages traduites */
+  .flow-lang-note {
+    margin-top: 16px; padding: 10px 16px; border-radius: 0 10px 10px 0;
+    border-left: 2px solid var(--seed); background: var(--bg-2);
+    font-size: .88rem; color: var(--ink-2);
+  }
+
   @media (prefers-reduced-motion: reduce) {
     .btn { transition: none !important; }
   }
@@ -315,16 +335,19 @@
 </svg>
 
 <div class="wrap">
-  <nav aria-label="Principale">
+  <nav aria-label="{{nav.ariaLabel}}">
     <a class="brand" href="#"><svg><use href="#mark"/></svg><span>Sésame</span></a>
-    <ul>
-      <li><a href="#how">Comment ça marche</a></li>
-      <li><a href="#flow">Écran par écran</a></li>
-      <li><a href="#security">Sécurité</a></li>
-      <li><a href="#compat">Compatibilité</a></li>
-      <li><a href="#faq">Questions</a></li>
-      <li><a href="#download" style="color:var(--ink)">Télécharger</a></li>
-    </ul>
+    <div class="nav-right">
+      <ul>
+        <li><a href="#how">{{nav.how}}</a></li>
+        <li class="nav-hide-1180"><a href="#flow">{{nav.flow}}</a></li>
+        <li><a href="#security">{{nav.security}}</a></li>
+        <li class="nav-hide-1180"><a href="#compat">{{nav.compat}}</a></li>
+        <li><a href="#faq">{{nav.faq}}</a></li>
+        <li><a href="#download" style="color:var(--ink)">{{nav.download}}</a></li>
+      </ul>
+      {{LANG_SWITCHER}}
+    </div>
   </nav>
 </div>
 
@@ -332,24 +355,24 @@
   <div class="wrap hero-grid">
     <div>
       <svg class="mark" aria-hidden="true"><use href="#mark"/></svg>
-      <h1>Vos mots de passe restent chez vous. <em>Claude fait le reste.</em></h1>
-      <p class="lede">Sésame ouvre vos comptes à la place de Claude, automatiquement, sans jamais lui montrer un identifiant. Pour les sites sensibles, vous validez d'un clic. Tout reste sur votre Mac, dans le Trousseau d'Apple.</p>
+      <h1>{{hero.title}}</h1>
+      <p class="lede">{{hero.lede}}</p>
       <div class="hero-cta">
         <a class="btn btn-primary" href="https://github.com/sambisou/sesame/releases/latest/download/sesame-macos.zip" rel="noopener">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>
-          Télécharger pour Mac
+          {{hero.ctaDownload}}
         </a>
-        <a class="btn btn-ghost" href="#how">Voir comment ça marche</a>
+        <a class="btn btn-ghost" href="#how">{{hero.ctaHow}}</a>
       </div>
-      <p class="btn-note">Gratuit. Sans compte. Sans serveur. macOS 13 ou plus récent.</p>
+      <p class="btn-note">{{hero.note}}</p>
     </div>
 
-    <div class="demo stepper" id="stepper" aria-label="Comment Claude se connecte à un site avec Sésame, en 4 étapes">
+    <div class="demo stepper" id="stepper" aria-label="{{demo.ariaLabel}}">
       <div class="stepper-eyebrow">
-        <span class="eyebrow" style="margin-bottom:0" id="stepCount">Étape 1 sur 4</span>
+        <span class="eyebrow" style="margin-bottom:0" id="stepCount">{{DEMO_COUNT_INITIAL}}</span>
       </div>
-      <h3 class="stepper-title" id="stepTitle" aria-live="polite">Claude demande</h3>
-      <p class="stepper-text" id="stepText">Claude appelle l'outil <code>sesame_login("edf")</code> avec un motif : « récupérer la facture d'août ».</p>
+      <h3 class="stepper-title" id="stepTitle" aria-live="polite">{{demo.step1.title}}</h3>
+      <p class="stepper-text" id="stepText">{{demo.step1.text}}</p>
 
       <div class="stepper-illus">
         <div class="illus" data-illus="0" data-active>
@@ -359,19 +382,19 @@
               <span>Claude</span>
             </div>
             <span class="illus-arrow"><svg viewBox="0 0 24 24"><path d="M4 12h14M13 6l6 6-6 6"/></svg></span>
-            <div class="illus-code mono">sesame_login("edf")<span class="illus-dim">motif : récupérer la facture d'août</span></div>
+            <div class="illus-code mono">sesame_login("edf")<span class="illus-dim">{{demo.illus.dim}}</span></div>
           </div>
         </div>
         <div class="illus" data-illus="1">
           <div class="illus-col">
-            <div style="text-align:center"><span class="illus-ok">✓ Automatique : rien à faire</span></div>
-            <div class="illus-then">sauf sur un site réglé sur « Me demander »</div>
+            <div style="text-align:center"><span class="illus-ok">{{demo.illus.autoOk}}</span></div>
+            <div class="illus-then">{{demo.illus.autoException}}</div>
             <div class="mini-dialog">
               <svg aria-hidden="true"><use href="#mark"/></svg>
               <div>
-                <b>Sésame — demande d'accès</b>
-                <p><strong>Claude</strong> veut se connecter sur <strong>edf</strong>.</p>
-                <div class="mini-acts"><span class="mini-btn">Refuser</span><span class="mini-btn solid">Autoriser</span></div>
+                <b>{{demo.illus.dialogTitle}}</b>
+                <p>{{demo.illus.dialogBody}}</p>
+                <div class="mini-acts"><span class="mini-btn">{{demo.illus.dialogDeny}}</span><span class="mini-btn solid">{{demo.illus.dialogAllow}}</span></div>
               </div>
             </div>
           </div>
@@ -379,29 +402,29 @@
         <div class="illus" data-illus="2">
           <div class="illus-browser">
             <div class="illus-browser-bar"><span></span><span></span><span></span></div>
-            <div class="illus-field"><label>Identifiant</label><div class="illus-input">martine@example.fr</div></div>
-            <div class="illus-field"><label>Mot de passe</label><div class="illus-input dots">••••••••••</div></div>
-            <div class="illus-note">Le mot de passe ne quitte pas le Mac</div>
+            <div class="illus-field"><label>{{demo.illus.fillIdLabel}}</label><div class="illus-input">{{demo.illus.fillEmail}}</div></div>
+            <div class="illus-field"><label>{{demo.illus.fillPwLabel}}</label><div class="illus-input dots">••••••••••</div></div>
+            <div class="illus-note">{{demo.illus.fillNote}}</div>
           </div>
         </div>
         <div class="illus" data-illus="3">
           <div class="illus-col center">
-            <span class="illus-ok">✓ fait</span>
-            <div class="illus-journal mono">09:28:35 · edf · connexion · réussi</div>
-            <p class="illus-note" style="padding:0;color:var(--ink-3)">Claude ne reçoit jamais un identifiant</p>
+            <span class="illus-ok">{{demo.illus.doneOk}}</span>
+            <div class="illus-journal mono">{{demo.illus.doneJournal}}</div>
+            <p class="illus-note" style="padding:0;color:var(--ink-3)">{{demo.illus.doneNote}}</p>
           </div>
         </div>
       </div>
 
       <div class="stepper-controls">
-        <button type="button" class="stepper-btn" id="stepPrev">← Précédent</button>
-        <div class="stepper-dots" role="tablist" aria-label="Aller à l'étape">
-          <button type="button" class="stepper-dot" role="tab" data-step="0" aria-current="true" aria-label="Étape 1 · Claude demande"></button>
-          <button type="button" class="stepper-dot" role="tab" data-step="1" aria-current="false" aria-label="Étape 2 · Automatique, ou vous validez"></button>
-          <button type="button" class="stepper-dot" role="tab" data-step="2" aria-current="false" aria-label="Étape 3 · Sésame remplit"></button>
-          <button type="button" class="stepper-dot" role="tab" data-step="3" aria-current="false" aria-label="Étape 4 · Claude continue"></button>
+        <button type="button" class="stepper-btn" id="stepPrev">{{demo.prev}}</button>
+        <div class="stepper-dots" role="tablist" aria-label="{{demo.dotsAriaLabel}}">
+          <button type="button" class="stepper-dot" role="tab" data-step="0" aria-current="true" aria-label="{{DEMO_DOT_LABEL_1}}"></button>
+          <button type="button" class="stepper-dot" role="tab" data-step="1" aria-current="false" aria-label="{{DEMO_DOT_LABEL_2}}"></button>
+          <button type="button" class="stepper-dot" role="tab" data-step="2" aria-current="false" aria-label="{{DEMO_DOT_LABEL_3}}"></button>
+          <button type="button" class="stepper-dot" role="tab" data-step="3" aria-current="false" aria-label="{{DEMO_DOT_LABEL_4}}"></button>
         </div>
-        <button type="button" class="stepper-btn" id="stepNext">Suivant →</button>
+        <button type="button" class="stepper-btn" id="stepNext">{{demo.next}}</button>
       </div>
     </div>
   </div>
@@ -409,28 +432,28 @@
 
 <section id="sees">
   <div class="wrap">
-    <p class="eyebrow">Le principe</p>
-    <h2>Claude ne reçoit jamais votre mot de passe. Il n'a même pas de commande pour le demander.</h2>
-    <p class="lede" style="margin-top:20px">Automatique par défaut : Sésame se connecte pour Claude sans que vous ayez à cliquer, sauf sur les sites que vous réglez sur « Me demander ». Dans tous les cas, aucune commande ne renvoie un secret : Claude obtient trois réponses possibles, et rien d'autre. Le mot de passe est tapé dans la page par Sésame, jamais montré.</p>
+    <p class="eyebrow">{{sees.eyebrow}}</p>
+    <h2>{{sees.title}}</h2>
+    <p class="lede" style="margin-top:20px">{{sees.lede}}</p>
     <div class="split">
       <div class="panel">
-        <h3><svg viewBox="0 0 24 24" fill="none" stroke="var(--ok)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>Ce que Claude reçoit</h3>
+        <h3><svg viewBox="0 0 24 24" fill="none" stroke="var(--ok)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>{{sees.yesTitle}}</h3>
         <ul>
-          <li><code>fait</code> — le formulaire est rempli, la session est ouverte</li>
-          <li><code>refusé</code> — vous avez dit non, ou l'accès est coupé</li>
-          <li><code>échec</code> — le site a résisté, sans jamais dire pourquoi en détail</li>
-          <li>La liste des sites que vous avez enregistrés, par nom</li>
-          <li>Le journal des accès, en lecture seule</li>
+          <li>{{sees.yes1}}</li>
+          <li>{{sees.yes2}}</li>
+          <li>{{sees.yes3}}</li>
+          <li>{{sees.yes4}}</li>
+          <li>{{sees.yes5}}</li>
         </ul>
       </div>
       <div class="panel no">
-        <h3><svg viewBox="0 0 24 24" fill="none" stroke="var(--no)" stroke-width="2.2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>Ce que Claude ne reçoit jamais</h3>
+        <h3><svg viewBox="0 0 24 24" fill="none" stroke="var(--no)" stroke-width="2.2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>{{sees.noTitle}}</h3>
         <ul>
-          <li>Votre identifiant</li>
-          <li>Votre mot de passe, même masqué, même partiel</li>
-          <li>Le contenu des champs, y compris dans les messages d'erreur</li>
-          <li>Le droit d'effacer une ligne du journal</li>
-          <li>Le droit d'ajouter un site sans vous</li>
+          <li>{{sees.no1}}</li>
+          <li>{{sees.no2}}</li>
+          <li>{{sees.no3}}</li>
+          <li>{{sees.no4}}</li>
+          <li>{{sees.no5}}</li>
         </ul>
       </div>
     </div>
@@ -439,24 +462,24 @@
 
 <section id="how">
   <div class="wrap">
-    <p class="eyebrow">Comment ça marche</p>
-    <h2>Trois gestes, et plus jamais un mot de passe à taper devant Claude.</h2>
+    <p class="eyebrow">{{how.eyebrow}}</p>
+    <h2>{{how.title}}</h2>
     <div class="steps">
       <div class="step">
         <div class="n">1</div>
-        <h3>Installez Sésame</h3>
-        <p>Téléchargez l'archive, ouvrez-la, et double-cliquez sur « Install Sesame ». L'installateur se présente à Claude tout seul et pose une petite graine dans la barre des menus. La première fois, macOS demande un clic droit puis « Ouvrir ».</p>
+        <h3>{{how.step1Title}}</h3>
+        <p>{{how.step1Body}}</p>
       </div>
       <div class="step">
         <div class="n">2</div>
-        <h3>Ajoutez un site</h3>
-        <p>Cliquez sur la graine, « Ajouter un site », tapez votre identifiant et votre mot de passe une seule fois. Ils partent dans le Trousseau d'Apple, chiffrés. Choisissez sa règle : Automatique pour ne plus rien valider, ou Me demander pour les sites sensibles.</p>
+        <h3>{{how.step2Title}}</h3>
+        <p>{{how.step2Body}}</p>
       </div>
       <div class="step">
         <div class="n">3</div>
-        <h3>Demandez à Claude</h3>
-        <p>En Automatique, Sésame remplit le formulaire tout seul dans votre navigateur : rien à valider. Sur un site « Me demander », une fenêtre vous demande votre accord d'abord. Claude continue son travail.</p>
-        <div class="say">« Connecte-toi sur EDF et récupère la facture d'août. »</div>
+        <h3>{{how.step3Title}}</h3>
+        <p>{{how.step3Body}}</p>
+        <div class="say">{{how.step3Say}}</div>
       </div>
     </div>
   </div>
@@ -464,25 +487,26 @@
 
 <section id="flow">
   <div class="wrap">
-    <p class="eyebrow">Écran par écran</p>
-    <h2>Ce que vous verrez vraiment, sur votre Mac.</h2>
-    <p class="lede" style="margin-top:20px">Des captures de Sésame tel qu'il est, pas des maquettes. Trois fenêtres au quotidien, une graine dans la barre des menus.</p>
+    <p class="eyebrow">{{flow.eyebrow}}</p>
+    <h2>{{flow.title}}</h2>
+    <p class="lede" style="margin-top:20px">{{flow.lede}}</p>
+    {{FLOW_LANG_NOTE}}
     <div class="shots">
       <figure class="shot">
-        <img src="img/panneau.png" alt="Le panneau Sésame dans la barre des menus : liste des sites avec leur règle, journal, bouton Bloquer" loading="lazy">
-        <figcaption><b>1 · La graine dans la barre des menus.</b> Vos sites, la règle de chacun (automatique, me demander, coupé), le journal des accès, le bouton « Bloquer » qui coupe tout, et le bouton pour ajouter un site.</figcaption>
+        <img src="/img/panneau.png" alt="{{flow.shot1Alt}}" loading="lazy">
+        <figcaption><b>{{flow.shot1Title}}</b> {{flow.shot1Body}}</figcaption>
       </figure>
       <figure class="shot">
-        <img src="img/fenetre-identifiants.png" alt="La fenêtre Sésame qui demande identifiant et mot de passe pour un site, avec l'œil pour afficher le mot de passe" loading="lazy">
-        <figcaption><b>2 · La fenêtre d'identifiants.</b> Quand Claude a besoin d'un site que Sésame ne connaît pas, cette fenêtre s'ouvre : identifiant, mot de passe avec l'œil pour le relire, « Plus tard » ou « Enregistrer ». Le mot de passe part dans le Trousseau. Claude apprend seulement que le site est disponible.</figcaption>
+        <img src="/img/fenetre-identifiants.png" alt="{{flow.shot2Alt}}" loading="lazy">
+        <figcaption><b>{{flow.shot2Title}}</b> {{flow.shot2Body}}</figcaption>
       </figure>
       <figure class="shot">
-        <img src="img/dialogue-acces.png" alt="La demande d'accès Sésame : qui demande, quel site, pourquoi, boutons Refuser et Autoriser" loading="lazy">
-        <figcaption><b>3 · La demande d'accès, sur un site « Me demander ».</b> Qui demande, quel site, pourquoi. « Refuser » est le bouton par défaut. Le Trousseau d'Apple, lui, ne demande rien pour un site enregistré depuis la 0.5.1 ; pour un site plus ancien, une seule fois, lors de <code>sesame migrate-keychain</code>.</figcaption>
+        <img src="/img/dialogue-acces.png" alt="{{flow.shot3Alt}}" loading="lazy">
+        <figcaption><b>{{flow.shot3Title}}</b> {{flow.shot3Body}}</figcaption>
       </figure>
       <figure class="shot">
-        <img src="img/bandeau-code.png" alt="Le bandeau Sésame en haut de la page qui attend la saisie du code reçu par e-mail ou SMS" loading="lazy">
-        <figcaption><b>4 · Le code, c'est vous.</b> Si le site envoie un code par SMS, e-mail ou application, un bandeau apparaît en haut de la page et Sésame attend. Vous tapez le code, le site l'accepte, Claude reprend.</figcaption>
+        <img src="/img/bandeau-code.png" alt="{{flow.shot4Alt}}" loading="lazy">
+        <figcaption><b>{{flow.shot4Title}}</b> {{flow.shot4Body}}</figcaption>
       </figure>
     </div>
   </div>
@@ -490,27 +514,27 @@
 
 <section id="chrome">
   <div class="wrap">
-    <p class="eyebrow">Le navigateur</p>
-    <h2>Pourquoi une fenêtre Chrome à part, et comment on s'en passe.</h2>
-    <p class="lede" style="margin-top:20px">Depuis sa version 136, Chrome interdit à tout programme de piloter votre profil habituel. C'est une protection contre les logiciels malveillants, et Sésame la respecte. Voici ce que ça change, et ce qu'on a fait pour que ça ne se voie presque pas.</p>
+    <p class="eyebrow">{{chrome.eyebrow}}</p>
+    <h2>{{chrome.title}}</h2>
+    <p class="lede" style="margin-top:20px">{{chrome.lede}}</p>
     <div class="split">
       <div class="panel">
-        <h3>Aujourd'hui : un Chrome Sésame, discret</h3>
+        <h3>{{chrome.todayTitle}}</h3>
         <ul>
-          <li>Sésame lance lui-même un Chrome avec son propre profil, réduit dans le Dock. Vous n'avez rien à ouvrir.</li>
-          <li>Il reste en arrière-plan pendant la connexion et ne se déplie que si un site attend un code de votre part.</li>
-          <li>Vos sessions y restent ouvertes : une fois connecté à EDF, plus besoin de Sésame jusqu'à expiration.</li>
-          <li>Rien d'autre n'y est installé : aucune extension tierce ne peut y observer ce que Sésame tape.</li>
+          <li>{{chrome.today1}}</li>
+          <li>{{chrome.today2}}</li>
+          <li>{{chrome.today3}}</li>
+          <li>{{chrome.today4}}</li>
         </ul>
       </div>
       <div class="panel">
-        <h3>Disponible : l'extension, dans votre Chrome habituel</h3>
+        <h3>{{chrome.extTitle}}</h3>
         <ul>
-          <li>L'extension Sésame (bêta) remplit le formulaire directement dans votre Chrome de tous les jours. Plus de fenêtre à part.</li>
-          <li><span>Installation depuis la graine : menu Sésame → « Navigateur » → « Installer… ». Sésame ouvre <code>chrome://extensions</code> et active le mode développeur pour vous.</span></li>
-          <li><span>Chargez le dossier <code>extension/</code>, copiez l'ID affiché sous son nom, collez-le dans Sésame et cliquez « Relier ».</span></li>
-          <li>Elle reçoit les identifiants par le canal de messagerie native de Chrome, un tuyau local entre l'extension et Sésame. Rien ne passe par le réseau, l'extension ne stocke rien. Sésame la choisit dès qu'elle répond, sinon le Chrome à part.</li>
-          <li>Limite honnête : dans votre Chrome habituel, une autre extension ayant accès à la page pourrait observer la frappe, comme elle pourrait vous observer vous-même. Le Chrome dédié n'a pas cette exposition. À vous de choisir.</li>
+          <li>{{chrome.ext1}}</li>
+          <li><span>{{chrome.ext2}}</span></li>
+          <li><span>{{chrome.ext3}}</span></li>
+          <li>{{chrome.ext4}}</li>
+          <li>{{chrome.ext5}}</li>
         </ul>
       </div>
     </div>
@@ -519,42 +543,42 @@
 
 <section id="security">
   <div class="wrap">
-    <p class="eyebrow">Sécurité</p>
-    <h2>Construit comme Apple le ferait : local, chiffré, sous votre contrôle.</h2>
-    <p class="lede" style="margin-top:20px">Vous choisissez : automatique, ou validation à chaque fois pour les sites sensibles. Et un bouton Bloquer qui coupe tout, à tout moment.</p>
+    <p class="eyebrow">{{security.eyebrow}}</p>
+    <h2>{{security.title}}</h2>
+    <p class="lede" style="margin-top:20px">{{security.lede}}</p>
     <div class="sec-grid" style="margin-top:48px">
       <ul class="sec-list">
         <li>
           <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg></div>
-          <div><b>Le Trousseau d'Apple, pas un coffre maison</b><p>Sésame confie vos secrets au Trousseau macOS, le même qui garde vos mots de passe Safari et vos clés Wi-Fi. Chiffrement d'Apple, protégé par votre session et, sur les Mac récents, par la puce de sécurité.</p></div>
+          <div><b>{{security.item1Title}}</b><p>{{security.item1Body}}</p></div>
         </li>
         <li>
           <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 4 7v5c0 5 3.5 8.5 8 9 4.5-.5 8-4 8-9V7l-8-4Z"/></svg></div>
-          <div><b>Rien ne quitte votre Mac</b><p>Pas de cloud, pas de compte Sésame, pas de synchronisation cachée. Le secret ne circule qu'entre le Trousseau et votre navigateur, sur la même machine.</p></div>
+          <div><b>{{security.item2Title}}</b><p>{{security.item2Body}}</p></div>
         </li>
         <li>
           <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z"/><path d="M5 21a7 7 0 0 1 14 0"/></svg></div>
-          <div><b>Vous choisissez, site par site</b><p>Automatique : Claude se connecte sans rien vous demander. Me demander : chaque connexion passe par une fenêtre Sésame qui dit qui, quel site, pourquoi. Vous changez d'avis en un clic, site par site.</p></div>
+          <div><b>{{security.item3Title}}</b><p>{{security.item3Body}}</p></div>
         </li>
         <li>
           <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4h14v16H5z"/><path d="M9 9h6M9 13h6M9 17h3"/></svg></div>
-          <div><b>Un journal que Claude ne peut pas effacer</b><p>Chaque demande est notée : qui, quand, quel site, autorisé ou refusé, réussi ou non. Claude peut le lire pour vous rendre compte. Il ne peut pas y toucher.</p></div>
+          <div><b>{{security.item4Title}}</b><p>{{security.item4Body}}</p></div>
         </li>
         <li>
           <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg></div>
-          <div><b>Un bouton Bloquer</b><p>Dans la barre de menus, il coupe toutes les connexions d'un coup, quel que soit le site, le temps que vous le souhaitez.</p></div>
+          <div><b>{{security.item5Title}}</b><p>{{security.item5Body}}</p></div>
         </li>
       </ul>
       <aside class="vault">
-        <p class="eyebrow">Sur votre Mac</p>
-        <h3>Où vit chaque chose</h3>
-        <p>Sésame sépare ce qui est secret de ce qui ne l'est pas. Seule la première colonne est chiffrée, et c'est la seule qui compte.</p>
+        <p class="eyebrow">{{security.vaultEyebrow}}</p>
+        <h3>{{security.vaultTitle}}</h3>
+        <p>{{security.vaultBody}}</p>
         <div class="kv">
-          <div><span>Identifiants et mots de passe</span><span>Trousseau macOS</span></div>
-          <div><span>Liste des sites, règles d'accès</span><span>fichier local, sans secret</span></div>
-          <div><span>Journal des accès</span><span>fichier local, ajout seul</span></div>
-          <div><span>Sessions ouvertes (cookies)</span><span>navigateur dédié</span></div>
-          <div><span>Ce qui part sur Internet</span><span>rien</span></div>
+          <div><span>{{security.kv1Label}}</span><span>{{security.kv1Value}}</span></div>
+          <div><span>{{security.kv2Label}}</span><span>{{security.kv2Value}}</span></div>
+          <div><span>{{security.kv3Label}}</span><span>{{security.kv3Value}}</span></div>
+          <div><span>{{security.kv4Label}}</span><span>{{security.kv4Value}}</span></div>
+          <div><span>{{security.kv5Label}}</span><span>{{security.kv5Value}}</span></div>
         </div>
       </aside>
     </div>
@@ -563,47 +587,43 @@
 
 <section id="compat">
   <div class="wrap">
-    <p class="eyebrow">Compatibilité</p>
-    <h2>Fait pour Claude. Ouvert aux autres.</h2>
-    <p class="lede" style="margin-top:20px">Sésame parle le protocole MCP, le standard ouvert par lequel les assistants utilisent des outils. Claude le comprend aujourd'hui. Les autres suivront, sans rien changer à vos mots de passe.</p>
+    <p class="eyebrow">{{compat.eyebrow}}</p>
+    <h2>{{compat.title}}</h2>
+    <p class="lede" style="margin-top:20px">{{compat.lede}}</p>
     <div class="logos">
-      <span class="chip"><span class="dot"></span>Claude Desktop et Cowork</span>
-      <span class="chip"><span class="dot"></span>Claude Code</span>
-      <span class="chip"><span class="dot"></span>Claude dans Chrome</span>
-      <span class="chip"><span class="dot"></span>Extension Chrome (bêta) : votre Chrome habituel, sans fenêtre à part</span>
-      <span class="chip soon"><span class="dot"></span>Cursor, VS Code, Windsurf · compatible, non testé</span>
-      <span class="chip soon"><span class="dot"></span>Codex CLI, Gemini CLI · compatible, non testé</span>
-      <span class="chip soon"><span class="dot"></span>ChatGPT · via connecteur distant, non testé</span>
+      <span class="chip"><span class="dot"></span>{{compat.chip1}}</span>
+      <span class="chip"><span class="dot"></span>{{compat.chip2}}</span>
+      <span class="chip"><span class="dot"></span>{{compat.chip3}}</span>
+      <span class="chip"><span class="dot"></span>{{compat.chip4}}</span>
+      <span class="chip soon"><span class="dot"></span>{{compat.chip5}}</span>
+      <span class="chip soon"><span class="dot"></span>{{compat.chip6}}</span>
+      <span class="chip soon"><span class="dot"></span>{{compat.chip7}}</span>
     </div>
   </div>
 </section>
 
 <section id="control">
   <div class="wrap">
-    <p class="eyebrow">Contrôle</p>
-    <h2>Site par site. Accès par accès.</h2>
+    <p class="eyebrow">{{control.eyebrow}}</p>
+    <h2>{{control.title}}</h2>
     <div class="ctrl">
       <div class="panel">
-        <h3>Vos sites</h3>
+        <h3>{{control.sitesTitle}}</h3>
         <div class="tablewrap">
         <table>
-          <thead><tr><th>Site</th><th>Règle</th><th>Dernier accès</th></tr></thead>
+          <thead><tr><th>{{control.theadSite}}</th><th>{{control.theadRule}}</th><th>{{control.theadLastAccess}}</th></tr></thead>
           <tbody>
-            <tr><td><b>OVH</b><br><small class="mono" style="color:var(--ink-3)">ovh.com</small></td><td><span class="pol always">automatique</span></td><td>hier, 18:02</td></tr>
-            <tr><td><b>EDF</b><br><small class="mono" style="color:var(--ink-3)">particulier.edf.fr</small></td><td><span class="pol ask">me demander</span></td><td>aujourd'hui, 09:28</td></tr>
-            <tr><td><b>Impôts</b><br><small class="mono" style="color:var(--ink-3)">impots.gouv.fr</small></td><td><span class="pol revoked">accès coupé</span></td><td>il y a 12 jours</td></tr>
+            <tr><td><b>OVH</b><br><small class="mono" style="color:var(--ink-3)">ovh.com</small></td><td><span class="pol always">{{control.row1Policy}}</span></td><td>{{control.row1LastAccess}}</td></tr>
+            <tr><td><b>EDF</b><br><small class="mono" style="color:var(--ink-3)">particulier.edf.fr</small></td><td><span class="pol ask">{{control.row2Policy}}</span></td><td>{{control.row2LastAccess}}</td></tr>
+            <tr><td><b>{{control.row3Name}}</b><br><small class="mono" style="color:var(--ink-3)">impots.gouv.fr</small></td><td><span class="pol revoked">{{control.row3Policy}}</span></td><td>{{control.row3LastAccess}}</td></tr>
           </tbody>
         </table>
         </div>
       </div>
       <div class="panel">
-        <h3>Le journal</h3>
-        <div class="log"><b>09:28:32</b>  edf   demande   Claude Code   <span class="ok">autorisé</span>  validé par vous
-<b>09:28:35</b>  edf   connexion Claude Code   <span class="ok">réussi</span>    tableau de bord ouvert
-<b>18:02:10</b>  ovh   connexion Cowork        <span class="ok">réussi</span>    règle automatique
-<b>11:40:03</b>  impots demande  Cowork        <span class="no">refusé</span>    accès coupé
-<b>11:39:51</b>  impots demande  Cowork        <span class="no">refusé</span>    vous avez dit non</div>
-        <p style="margin-top:18px;color:var(--ink-2);font-size:.95rem">Chaque ligne dit qui a demandé, pour quel site, et ce que vous avez répondu. Rien n'y est jamais effacé.</p>
+        <h3>{{control.journalTitle}}</h3>
+        <div class="log">{{control.journalLog}}</div>
+        <p style="margin-top:18px;color:var(--ink-2);font-size:.95rem">{{control.journalFootnote}}</p>
       </div>
     </div>
   </div>
@@ -611,40 +631,40 @@
 
 <section id="faq">
   <div class="wrap">
-    <p class="eyebrow">Questions</p>
-    <h2>Ce qu'on nous demande le plus.</h2>
+    <p class="eyebrow">{{faq.eyebrow}}</p>
+    <h2>{{faq.title}}</h2>
     <div class="faq">
       <details open>
-        <summary>Sésame envoie-t-il mes mots de passe quelque part ?</summary>
-        <p>Non. Ils sont dans le Trousseau d'Apple sur votre Mac, et n'en sortent que pour être tapés dans votre navigateur, sur la même machine. Sésame n'a pas de serveur, pas de compte, pas de statistiques.</p>
+        <summary>{{faq.q1Question}}</summary>
+        <p>{{faq.q1Answer}}</p>
       </details>
       <details>
-        <summary>Et Claude, il pourrait tricher pour obtenir un mot de passe ?</summary>
-        <p>Il n'a pas de commande pour ça. Sésame ne lui propose que « connecte-toi », « liste les sites », « lis le journal ». Même en insistant, la seule chose qu'il obtient est « fait », « refusé » ou « échec ».</p>
+        <summary>{{faq.q2Question}}</summary>
+        <p>{{faq.q2Answer}}</p>
       </details>
       <details>
-        <summary>Pourquoi une deuxième fenêtre Chrome ?</summary>
-        <p>Chrome refuse depuis sa version 136 qu'un programme pilote votre profil habituel. Sésame utilise donc, par défaut, un Chrome à profil séparé, qu'il lance lui-même, réduit, et qu'il ne déplie que pour un code. Vous pouvez vous en passer avec l'extension Chrome (bêta) : elle remplit le formulaire directement dans votre Chrome habituel, sans deuxième fenêtre.</p>
+        <summary>{{faq.q3Question}}</summary>
+        <p>{{faq.q3Answer}}</p>
       </details>
       <details>
-        <summary>Pourquoi mon Mac me demande-t-il mon mot de passe de session ?</summary>
-        <p>Pour un site enregistré depuis la 0.5.1, il ne le demande pas : l'assistant Trousseau de Sésame crée et relit lui-même l'élément, en silence, dès le premier accès. Pour un site plus ancien, une seule commande règle ça pour de bon : <code>sesame migrate-keychain</code> — une fenêtre du Trousseau par site, vous cliquez « Autoriser », et c'est terminé.</p>
+        <summary>{{faq.q4Question}}</summary>
+        <p>{{faq.q4Answer}}</p>
       </details>
       <details>
-        <summary>Comment installer l'extension Chrome ?</summary>
-        <p>Depuis la graine dans la barre des menus : « Navigateur » puis « Installer… ». Sésame ouvre <code>chrome://extensions</code> et active le mode développeur pour vous ; chargez le dossier <code>extension/</code>, copiez l'ID affiché sous son nom, collez-le dans Sésame et cliquez « Relier ». Sésame confirme quand la connexion est active. C'est une bêta : dans votre Chrome habituel, une autre extension ayant accès à la page pourrait en théorie observer la frappe, comme elle pourrait vous observer vous-même.</p>
+        <summary>{{faq.q5Question}}</summary>
+        <p>{{faq.q5Answer}}</p>
       </details>
       <details>
-        <summary>Et les codes par SMS ou l'application d'authentification ?</summary>
-        <p>Ils restent entre vos mains. Quand un site en demande un, Sésame vous prévient, affiche « J'attends votre code » en haut de la page, et patiente pendant que vous le tapez. La connexion ne reprend qu'une fois le code accepté. C'est voulu : le deuxième facteur, c'est vous.</p>
+        <summary>{{faq.q6Question}}</summary>
+        <p>{{faq.q6Answer}}</p>
       </details>
       <details>
-        <summary>Que se passe-t-il si je perds mon Mac ?</summary>
-        <p>Les secrets sont dans le Trousseau, protégés par votre session macOS et le chiffrement du disque. Sans votre mot de passe de session, ils sont illisibles. Changez tout de même vos mots de passe, comme pour n'importe quel ordinateur perdu.</p>
+        <summary>{{faq.q7Question}}</summary>
+        <p>{{faq.q7Answer}}</p>
       </details>
       <details>
-        <summary>Combien ça coûte ?</summary>
-        <p>Rien. Sésame est gratuit et son code est ouvert : n'importe qui peut vérifier qu'il fait exactement ce qui est écrit ici.</p>
+        <summary>{{faq.q8Question}}</summary>
+        <p>{{faq.q8Answer}}</p>
       </details>
     </div>
   </div>
@@ -654,19 +674,19 @@
   <div class="wrap">
     <div class="dl">
       <div>
-        <p class="eyebrow">Téléchargement</p>
-        <h2>Ouvrez Sésame.</h2>
-        <p class="lede" style="margin-top:16px">Une application, un glisser-déposer, et Claude se connecte pour vous. Sans jamais savoir comment.</p>
+        <p class="eyebrow">{{dl.eyebrow}}</p>
+        <h2>{{dl.title}}</h2>
+        <p class="lede" style="margin-top:16px">{{dl.lede}}</p>
         <div class="hero-cta">
           <a class="btn btn-primary" href="https://github.com/sambisou/sesame/releases/latest/download/sesame-macos.zip" rel="noopener">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>
-            Télécharger Sésame pour Mac
+            {{dl.cta}}
           </a>
         </div>
         <div class="meta">
-          <div><span>Version</span><span>0.5.1 · prototype, archive zip avec l'app de la barre des menus</span></div>
-          <div><span>Prérequis</span><span>macOS 13 ou plus récent, Google Chrome, Node.js 20 ou plus récent</span></div>
-          <div><span>Prix</span><span>Gratuit, code ouvert</span></div>
+          <div><span>{{dl.versionLabel}}</span><span>{{dl.versionValue}}</span></div>
+          <div><span>{{dl.reqLabel}}</span><span>{{dl.reqValue}}</span></div>
+          <div><span>{{dl.priceLabel}}</span><span>{{dl.priceValue}}</span></div>
         </div>
       </div>
       <div style="display:grid;place-items:center">
@@ -678,31 +698,17 @@
 
 <div class="wrap">
   <footer>
-    <span>Sésame · fait en Alsace</span>
-    <span>sesamekey.app · <a href="https://github.com/sambisou/sesame" rel="noopener">Code ouvert</a> · Aucune donnée collectée</span>
+    <span>{{footer.tagline}}</span>
+    <span>{{footer.meta}} · <a href="{{PRIVACY_HREF}}">{{footer.privacyLink}}</a></span>
   </footer>
 </div>
 
+{{RUNTIME_I18N}}
 <script>
 (function () {
-  var steps = [
-    {
-      title: "Claude demande",
-      text: 'Claude appelle l’outil <code>sesame_login("edf")</code> avec un motif : « récupérer la facture d’août ».'
-    },
-    {
-      title: "Automatique, ou vous validez",
-      text: "Sur un site en Automatique, rien à faire : Sésame se connecte tout seul. Sur un site « Me demander », une seule fenêtre apparaît, celle de Sésame : Autoriser ou Refuser."
-    },
-    {
-      title: "Sésame remplit",
-      text: "Sésame tape identifiant et mot de passe dans le site, dans Chrome. Le mot de passe ne quitte pas le Mac. Si un code est demandé, c’est vous qui le tapez."
-    },
-    {
-      title: "Claude continue",
-      text: "Claude reçoit seulement « fait », jamais un identifiant. Le journal garde une ligne."
-    }
-  ];
+  var i18n = (window.SESAME_I18N && window.SESAME_I18N.demo) || {};
+  var steps = [i18n.step1, i18n.step2, i18n.step3, i18n.step4];
+  var countFormat = i18n.countFormat || "{n}/{total}";
 
   var root = document.getElementById("stepper");
   if (!root) return;
@@ -721,7 +727,7 @@
     var s = steps[index];
     titleEl.textContent = s.title;
     textEl.innerHTML = s.text;
-    countEl.textContent = "Étape " + (index + 1) + " sur 4";
+    countEl.textContent = countFormat.replace("{n}", index + 1).replace("{total}", steps.length);
     illus.forEach(function (el) {
       var active = Number(el.getAttribute("data-illus")) === index;
       if (active) { el.setAttribute("data-active", ""); } else { el.removeAttribute("data-active"); }

@@ -8,7 +8,7 @@ import { spawn, execFileSync } from "node:child_process";
 import readline from "node:readline";
 import { fileURLToPath } from "node:url";
 import {
-  HOME, SITES_FILE, JOURNAL_FILE, CHROME_PROFILE, CDP_URL, POLICIES,
+  HOME, SITES_FILE, JOURNAL_FILE, CHROME_PROFILE, CDP_URL, POLICIES, KEYCHAIN_SERVICE,
   loadSites, saveSites, normalizeName, siteDomainFor, assertLoginUrl, ensureHome,
 } from "../src/config.js";
 import {
@@ -224,6 +224,9 @@ function migrateKeychain() {
   for (const key of toMigrate) {
     try {
       const secret = readSecretViaSecurityTool(key);
+      // L'ancien élément appartient à l'outil système : c'est lui qui doit le supprimer (SecItemDelete depuis
+      // l'assistant échoue et SecItemAdd répondrait « élément en double », -25299).
+      try { execFileSync("/usr/bin/security", ["delete-generic-password", "-s", KEYCHAIN_SERVICE, "-a", key], { stdio: "ignore" }); } catch {}
       setSecret(key, secret);
       if (!hasSecret(key)) throw new Error("vérification après écriture échouée (secret absent)");
       logEvent({ site: key, action: "keychain_migrate", caller: "cli", result: "ok" });

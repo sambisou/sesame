@@ -179,6 +179,9 @@ final class Store {
                 guard read.status == 0 else { outcomes.append((key, false)); continue }
                 let value = read.out.trimmingCharacters(in: .newlines)
                 guard let data = value.data(using: .utf8) else { outcomes.append((key, false)); continue }
+                // L'ancien élément appartient à l'outil système : c'est lui qui le supprime, sinon SecItemAdd
+                // répond « élément en double » (-25299).
+                _ = self.security(["delete-generic-password", "-s", svc, "-a", key])
                 let writeStatus = self.runHelper(helper, ["set", svc, key], stdin: data)
                 guard writeStatus == 0 else { outcomes.append((key, false)); continue }
                 let hasStatus = self.runHelper(helper, ["has", svc, key])

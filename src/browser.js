@@ -148,7 +148,10 @@ export async function gotoLogin(page, url, site) {
 
 export async function openPage(browser, url) {
   const ctx = browser.contexts()[0] || await browser.newContext();
-  const page = await ctx.newPage();
+  // Réutiliser un onglet vide (celui du lancement, ou un « nouvel onglet ») plutôt que créer une cible :
+  // par le protocole DevTools, Chrome ouvre volontiers une nouvelle cible dans une fenêtre séparée.
+  const blank = ctx.pages().find(p => /^(about:blank|chrome:\/\/newtab)/.test(p.url() || ""));
+  const page = blank || await ctx.newPage();
   await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30000 }).catch(() => {});
   return page;
 }

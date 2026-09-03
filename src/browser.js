@@ -68,14 +68,29 @@ export async function launchChrome({ waitMs = 15000 } = {}) {
   return false;
 }
 
+/** Réduit ou déplie la fenêtre Chrome qui contient l'onglet (protocole DevTools). Silencieux en cas d'échec. */
+export async function setWindowState(page, state) {
+  try {
+    const s = await page.context().newCDPSession(page);
+    const { windowId } = await s.send("Browser.getWindowForTarget");
+    await s.send("Browser.setWindowBounds", { windowId, bounds: { windowState: state } });
+    await s.detach().catch(() => {});
+  } catch {}
+}
+
 export async function connect() {
-  // Chrome Sésame fermé : on le lance nous-mêmes (Sam n'a pas à passer par un terminal).
+  // Chrome Sésame fermé : on le lance nous-mêmes (l'utilisateur n'a pas à passer par un terminal).
+  let justLaunched = false;
   if (!(await cdpReachable())) {
     const up = await launchChrome();
     if (!up) throw new Error(`Chrome Sésame ne répond pas sur ${CDP_URL} après lancement. Vérifie qu'un autre Chrome n'occupe pas le port.`);
+    justLaunched = true;
   }
   try {
-    return await chromium.connectOverCDP(CDP_URL, { timeout: 15000 });
+    const browser = await chromium.connectOverCDP(CDP_URL, { timeout: 15000 });
+    // Lancé par Sésame : la fenêtre part réduite dans le Dock. Elle ne se dépliera que pour un code à saisir.
+    if (justLaunched) for (const p of allPages(browser)) await setWindowState(p, "minimized");
+    return browser;
   } catch (e) {
     // Chrome tourne mais n'a plus aucun onglet (dernière fenêtre fermée) : le protocole refuse la connexion.
     // On ouvre un onglet vide par l'API DevTools et on réessaie une fois.
@@ -292,6 +307,7 @@ export async function waitForSecondFactor(page, site, { timeoutSec = 180, messag
   const banner = message || `Sésame attend que vous saisissiez le code reçu par e-mail, SMS ou application. La connexion reprendra toute seule dès que le site l'aura accepté (encore ${timeoutSec} s).`;
   const elapsed = () => Math.round((Date.now() - started) / 1000);
   let clear = 0;
+  await setWindowState(page, "normal");      // dépliée si elle était réduite
   await page.bringToFront().catch(() => {}); // ici, oui : l'utilisateur doit taper le code
   await showBanner(page, banner);
   while (Date.now() < deadline) {

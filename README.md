@@ -116,6 +116,13 @@ sesame log --site edf -n 100
 
 Each line of `~/.sesame/journal.jsonl` records: timestamp, site, action (`login`, `2fa`, `open_login`, `policy`, `lock`…), caller (`cowork`, `claude-code`, `cli`, `http`…), result (`authorized`, `refused`, `succeeded`, `failed`, `error` — in French in the file) and a readable detail. Claude can read it through `sesame_journal` to report back to you, but cannot erase it.
 
+## The two windows you will see at every login
+
+1. **Sésame — demande d'accès.** Who is asking (Cowork, Claude Code…), which site, and why. *Refuser* is the default; click **Autoriser** to let Sésame fill the form. Nothing happens without this click (unless you set the site to *Automatique*).
+2. **The macOS Keychain dialog**: *"security wants to use your confidential information stored in “Sésame — edf” in your keychain. To allow this, enter the “login” keychain password."* This is macOS itself asking, because Sésame stores its items with **no trusted application**. Type your Mac session password and click **Allow**. **Never click Always Allow**: that would let any program on your Mac read the password silently from then on (`sesame doctor` would then flag the site; re-register it to fix). *Deny* cancels the login.
+
+Then, if the site asks for a code (SMS, e-mail, app), a banner appears at the top of the Sésame Chrome and Sésame waits for you.
+
 ## Using it with Claude
 
 Just say: *"Log in to my EDF account and fetch the August invoice."*

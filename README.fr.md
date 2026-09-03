@@ -111,6 +111,13 @@ sesame log --site edf -n 100
 
 Chaque ligne de `~/.sesame/journal.jsonl` : horodatage, site, action (`login`, `open_login`, `policy`, `lock`…), appelant (`cowork`, `claude-code`, `cli`), résultat (`autorisé`, `refusé`, `réussi`, `échec`, `erreur`) et un détail lisible. Claude peut le lire via `sesame_journal` pour te rendre compte, mais pas l'effacer.
 
+## Les deux fenêtres que tu verras à chaque connexion
+
+1. **Sésame — demande d'accès.** Qui demande (Cowork, Claude Code…), quel site, et pourquoi. *Refuser* est le bouton par défaut ; clique **Autoriser** pour laisser Sésame remplir le formulaire. Rien ne se passe sans ce clic (sauf si tu as mis le site en *Automatique*).
+2. **La fenêtre du Trousseau macOS** : *« security wants to use your confidential information stored in “Sésame — edf” in your keychain. To allow this, enter the “login” keychain password. »* C'est macOS lui-même qui demande, parce que Sésame range ses éléments **sans application de confiance**. Tape le mot de passe de ta session Mac et clique **Allow** (Autoriser). **Ne clique jamais Always Allow** (Toujours autoriser) : n'importe quel programme de ton Mac pourrait ensuite lire le mot de passe en silence (`sesame doctor` signalerait le site ; réenregistre-le pour corriger). *Deny* annule la connexion.
+
+Ensuite, si le site demande un code (SMS, e-mail, application), un bandeau apparaît en haut du Chrome Sésame et Sésame t'attend.
+
 ## Utilisation avec Claude
 
 Tu dis simplement : *« Connecte-toi sur mon compte EDF et récupère la facture d'août. »*

@@ -5,7 +5,7 @@ import { HOME, getSite, loadSites, saveSites, normalizeName, siteDomainFor, asse
 import { getSecret, hasSecret, setSecret, keychainAvailable } from "./keychain.js";
 import { logEvent } from "./journal.js";
 import { isLocked, askHuman, askText, notify, notifyWaitingCode } from "./policy.js";
-import { connect, findPage, openPage, fillLogin, detectSecondFactor, waitForSecondFactor, publicUrl } from "./browser.js";
+import { connect, findPage, openPage, fillLogin, detectSecondFactor, waitForSecondFactor, publicUrl, hasLoginFields, gotoLogin } from "./browser.js";
 
 /**
  * @param {object} o
@@ -59,6 +59,10 @@ export async function login({ site: siteName, submit = true, openIfMissing = tru
         return { ok: false, message: `Aucun onglet Chrome ouvert sur ${site.domain}.` };
       }
       page = await openPage(browser, site.loginUrl || `https://${site.domain}/`);
+      opened = true;
+    } else if (!(await hasLoginFields(page, site))) {
+      // Onglet du site sans formulaire (déjà connecté, tableau de bord, déconnexion) : on rouvre la page de connexion.
+      await gotoLogin(page, site.loginUrl || `https://${site.domain}/`, site);
       opened = true;
     }
 

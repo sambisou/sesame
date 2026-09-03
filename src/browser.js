@@ -127,6 +127,26 @@ export async function findPage(browser, site) {
   return pages[pages.length - 1];
 }
 
+/** L'onglet montre-t-il un formulaire de connexion (identifiant ou mot de passe) ? */
+export async function hasLoginFields(page, site) {
+  if (page.isClosed()) return false;
+  if (await locate(page, site, site.selectors?.password, PASS_SELECTORS)) return true;
+  return !!(await locate(page, site, site.selectors?.username, USER_SELECTORS));
+}
+
+/** Ramène un onglet du site sur sa page de connexion (session déjà ouverte, tableau de bord, page de déconnexion…). */
+export async function gotoLogin(page, url, site) {
+  await page.bringToFront().catch(() => {});
+  // Certains liens de connexion déconnectent d'abord (page « vous êtes déconnecté ») et n'affichent le
+  // formulaire qu'au passage suivant : on y retourne jusqu'à trois fois tant qu'aucun champ n'apparaît.
+  for (let i = 0; i < 3; i++) {
+    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30000 }).catch(() => {});
+    await page.waitForTimeout(1200);
+    if (!site || await hasLoginFields(page, site)) return true;
+  }
+  return false;
+}
+
 export async function openPage(browser, url) {
   const ctx = browser.contexts()[0] || await browser.newContext();
   const page = await ctx.newPage();

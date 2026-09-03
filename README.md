@@ -60,6 +60,29 @@ In that Chrome, the **first time**: install the **Claude in Chrome** extension a
 
 > Tip: to launch it at login, wrap `sesame chrome` in an Automator "Application" and add it under *System Settings → General → Login Items*.
 
+### Chrome extension (beta)
+
+An alternative to the dedicated Chrome above: a **browser extension** that runs in your **regular** Chrome — no second browser, no DevTools port. Sésame reaches it through a small local bridge process, over Chrome's own native-messaging channel (not the network).
+
+1. Open `chrome://extensions`.
+2. Turn on **Developer mode** (top right).
+3. Click **Load unpacked** and choose the `extension/` folder of this repo.
+4. Copy the ID shown under the extension's name (32 letters).
+5. Run:
+   ```bash
+   sesame install extension --id <that-id>
+   ```
+   This writes the native-messaging manifest (mode 0600) for Chrome only. Using Brave, Arc, Chromium or Chrome Canary instead? Add `--browser brave|arc|chromium|canary`: the manifest is written for that one browser, never for browsers where the extension isn't loaded.
+6. Reload the extension (the ↻ button on its card), open its popup, and click **Test the connection**.
+
+If the popup says *Native host has exited* right after that, and this folder lives in `~/Downloads`, `~/Documents` or `~/Desktop`, macOS is probably refusing to let Chrome run `bin/sesame-bridge.sh` from there (a process started by Chrome has Chrome's file permissions): allow Chrome for that folder in *System Settings → Privacy & Security → Files and Folders*, or move the repo elsewhere (e.g. `~/sesame`) and run step 5 again. Chrome reads the manifest from its own data folder (`~/Library/Application Support/Google/Chrome/NativeMessagingHosts` for the regular profile), which is where step 5 writes it.
+
+`sesame doctor` reports its status: manifest present, bridge reachable, extension connected. When all three are green, `sesame_login` and `sesame_wait_code` use the extension automatically instead of the dedicated Chrome — you keep browsing normally. Force one or the other with `SESAME_BROWSER=chrome-profile` or `SESAME_BROWSER=extension` (default `auto`).
+
+A login through the extension happens in two steps: Sésame first asks the extension to find (or open) the site's tab and check that a login form is visible; only then does it read the Keychain and send the credentials, for that tab, within 60 seconds. The access dialog names where the credentials will be typed ("your regular Chrome (Sésame extension)" or "the Sésame Chrome"). If the extension fails **before** the credentials were sent (bridge gone, Chrome closed during the first step), Sésame falls back to the dedicated Chrome in `auto` mode and says so in `steps`. If it stops answering **after** they were sent, there is **no fallback**: the answer says "the extension did not respond; the form may have been submitted — check the tab", and the journal records the attempt as *uncertain*. Credentials are never typed twice in two browsers.
+
+**Honest limitation:** the extension fills the form inside your everyday Chrome, where you may have other extensions installed. Any extension with access to that page's DOM can, in principle, observe what gets typed there — the same way it could observe you typing it yourself. The dedicated Chrome above doesn't have this exposure, because nothing else is installed in that profile. Pick whichever trade-off suits you; see [SECURITY.md](SECURITY.md) for the details.
+
 ## The menu bar app
 
 `Install Sesame.command` also installs **Sésame.app** in the menu bar (a small seed icon). Everything can be done from there, without a terminal:
@@ -167,6 +190,7 @@ Print every configuration at once: `sesame install print`.
 - **macOS only** (Keychain + `osascript` dialogs). Node 20 or later.
 - Each login triggers the macOS Keychain dialog before the password is read: answer **Allow**. Never click **Always Allow** (it would let any local process read the item silently, see SECURITY.md).
 - An agent running JavaScript in the Sésame Chrome (Claude in Chrome installed there) can observe what Sésame types into the page. Sésame always submits and clears the field on failure, but cannot hide the DOM from an extension you installed. See SECURITY.md.
+- Through the extension, if Chrome stops answering after the credentials were handed over, Sésame reports "the extension did not respond: check the tab" and does **not** retry in the dedicated Chrome (the form may already have been submitted).
 
 ## Troubleshooting
 
@@ -192,7 +216,10 @@ sesame doctor
 ```bash
 npm install
 npm run check        # syntax, MCP handshake, HTTP transport
-npm run test:live    # real form filling in the Sésame Chrome (needs `sesame chrome`)
+npm run test:live    # real form filling in the Sésame Chrome (port 9222 must be free: SESAME_CDP_URL=http://127.0.0.1:9223 to use another)
+npm run test:extension  # end to end through the Chrome extension: temporary Chrome profile, extension loaded via DevTools,
+                        # bridge started by Chrome (native messaging), test form filled with and without a code
+                        # (headless by default; SESAME_TEST_HEADED=1 to watch). Nothing is written to your Chrome or ~/.sesame.
 npm run pack         # builds sesame-macos.zip for a release
 ```
 

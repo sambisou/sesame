@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Sésame — politique de confidentialité</title>
+<meta name="description" content="Sésame ne collecte aucune donnée : ni analytique, ni télémétrie, ni identifiant transmis à un serveur. Tout reste sur votre Mac.">
+<meta property="og:title" content="Sésame — politique de confidentialité">
+<meta property="og:description" content="Aucune donnée collectée. Rien ne quitte votre Mac.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://sesamekey.app/privacy.html">
+<link rel="canonical" href="https://sesamekey.app/privacy.html">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cpath d='M32 3C46 14 54 27 54 41c0 13-10 20-22 20S10 54 10 41c0-14 8-27 22-38z' fill='%23C48A22'/%3E%3Cpath fill-rule='evenodd' d='M32 24a7 7 0 1 1 0 14 7 7 0 1 1 0-14zm-2.6 12h5.2l2.4 12h-10z' fill='%231A1714'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500..700&family=Instrument+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+  :root { --bg:#FBFAF7; --bg-2:#F1EEE6; --ink:#1A1714; --ink-2:#4A443C; --ink-3:#7C746A; --line:#E2DDD2; --seed:#C48A22; --seed-2:#A8711A; --seed-soft:#F3E6CB; --card:#FFFFFF; --ok:#2F7A4E; --ok-soft:#DDF0E3; --no:#B23A2E; --no-soft:#F6DEDA; }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --bg:#151311; --bg-2:#1E1B18; --ink:#F2EDE3; --ink-2:#C9C1B3; --ink-3:#8E8577; --line:#2E2A25; --seed:#D9A340; --seed-2:#E8B85C; --seed-soft:#2C2418; --card:#1E1B18; --ok:#6CC08B; --ok-soft:#1B2E22; --no:#E0776B; --no-soft:#3A1F1B; } }
+  :root[data-theme="dark"] { --bg:#151311; --bg-2:#1E1B18; --ink:#F2EDE3; --ink-2:#C9C1B3; --ink-3:#8E8577; --line:#2E2A25; --seed:#D9A340; --seed-2:#E8B85C; --seed-soft:#2C2418; --card:#1E1B18; --ok:#6CC08B; --ok-soft:#1B2E22; --no:#E0776B; --no-soft:#3A1F1B; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font-family:"Instrument Sans","Helvetica Neue",Arial,sans-serif; font-size:16px; line-height:1.6; }
+  .wrap { width:min(760px, calc(100% - 40px)); margin:0 auto; padding:48px 0 80px; }
+  h1,h2,h3 { font-family:"Bricolage Grotesque",sans-serif; letter-spacing:-.02em; line-height:1.15; margin:0; text-wrap:balance; }
+  h1 { font-size:2.2rem; font-weight:700; }
+  h2 { font-size:1.35rem; font-weight:600; margin-top:48px; padding-top:22px; border-top:1px solid var(--line); }
+  p { margin:12px 0 0; max-width:64ch; }
+  a { color:var(--seed-2); }
+  .brand { display:flex; align-items:center; gap:10px; text-decoration:none; margin-bottom:32px; }
+  .brand svg { width:26px; height:26px; }
+  .brand span { font-family:"Bricolage Grotesque",sans-serif; font-weight:700; font-size:1.1rem; color:var(--ink); letter-spacing:-.02em; }
+  .eyebrow { font-size:.75rem; font-weight:600; letter-spacing:.12em; text-transform:uppercase; color:var(--seed-2); margin-bottom:10px; }
+  .lede { color:var(--ink-2); font-size:1.05rem; }
+  .summary { margin-top:28px; border-radius:16px; background:var(--ink); color:var(--bg); padding:22px 26px; }
+  .summary .tag { font-size:.72rem; font-weight:600; letter-spacing:.1em; text-transform:uppercase; color:var(--seed); }
+  .summary p { color:color-mix(in srgb, var(--bg) 82%, transparent); margin-top:8px; max-width:none; }
+  .mono { font-family:"JetBrains Mono",ui-monospace,Menlo,monospace; font-size:.88em; }
+  code { font-family:"JetBrains Mono",ui-monospace,Menlo,monospace; font-size:.88em; background:var(--bg-2); padding:1px 6px; border-radius:5px; }
+  ul { margin:10px 0 0; padding-left:20px; } li { margin:7px 0; color:var(--ink-2); }
+  li b, p b { color:var(--ink); }
+  .tw { overflow-x:auto; }
+  table { width:100%; border-collapse:collapse; font-size:.9rem; margin-top:14px; }
+  th { text-align:left; font-size:.7rem; letter-spacing:.08em; text-transform:uppercase; color:var(--ink-3); padding:0 10px 8px 0; border-bottom:1px solid var(--line); font-weight:600; }
+  td { padding:10px 10px 10px 0; border-bottom:1px solid var(--line); vertical-align:top; color:var(--ink-2); }
+  td:first-child { color:var(--ink); font-weight:600; white-space:nowrap; }
+  .pill { display:inline-block; padding:2px 9px; border-radius:6px; font-size:.75rem; font-weight:600; background:var(--seed-soft); color:var(--seed-2); }
+  footer { margin-top:56px; color:var(--ink-3); font-size:.85rem; border-top:1px solid var(--line); padding-top:18px; display:flex; justify-content:space-between; flex-wrap:wrap; gap:8px; }
+  footer a { color:var(--ink-3); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <a class="brand" href="https://sesamekey.app/">
+    <svg viewBox="0 0 64 64" aria-hidden="true"><path d="M32 3C46 14 54 27 54 41c0 13-10 20-22 20S10 54 10 41c0-14 8-27 22-38z" fill="#C48A22"/><path fill-rule="evenodd" d="M32 24a7 7 0 1 1 0 14 7 7 0 1 1 0-14zm-2.6 12h5.2l2.4 12h-10z" fill="#1A1714"/></svg>
+    <span>Sésame</span>
+  </a>
+
+  <p class="eyebrow">Politique de confidentialité · mise à jour le 3 septembre 2026</p>
+  <h1>Aucune donnée collectée. Rien ne quitte votre Mac.</h1>
+  <p class="lede">Cette page couvre Sésame dans son ensemble — le serveur MCP, la CLI, l'app de la barre des menus, et l'extension Chrome « Sésame » (bêta). Elle est écrite pour être lue avant d'installer l'extension depuis le Chrome Web Store, mais s'applique à tout le projet.</p>
+
+  <div class="summary">
+    <p class="tag">English summary</p>
+    <p>Sésame collects nothing. It runs entirely on your Mac: no analytics, no telemetry, no remote server, no account. Credentials live only in the macOS Keychain. The Chrome extension stores nothing itself, sends what it types nowhere but back to the local bridge process on your machine, and never reads back a field's value. The AI model that requests a login never receives a credential — only a done / refused / failed result. See the sections below (in French) for exactly what each permission is for; the tables and headings are self-explanatory even without reading French.</p>
+  </div>
+
+  <h2>Ce que Sésame collecte</h2>
+  <p><b>Rien.</b> Pas d'analytique, pas de télémétrie, pas de compte, pas de serveur distant. Sésame est un logiciel local : serveur MCP, CLI, app de menu bar et extension Chrome tournent tous sur votre Mac et ne parlent qu'entre eux, jamais à un service tiers. Il n'y a aucune requête réseau sortante liée à vos identifiants — la seule sortie réseau de tout le projet est celle que vous initiez vous-même en naviguant dans Chrome.</p>
+
+  <h2>Où vont vos identifiants</h2>
+  <p>Un identifiant que vous enregistrez (<code>sesame add</code>, la fenêtre de l'app, ou <code>sesame_request_site</code> à la demande de Claude) part directement dans le <b>Trousseau macOS</b> (service <code>sesame</code>), chiffré par le système. Sésame n'en garde aucune copie ailleurs : pas de fichier, pas de cache, pas de journal contenant un mot de passe.</p>
+  <p>Au moment d'une connexion, le mot de passe est lu depuis le Trousseau, tapé dans la page de connexion (Chrome à profil dédié, ou l'extension dans votre Chrome habituel — voir plus bas), puis effacé de la mémoire du processus qui l'a manipulé. Il ne transite par aucun tiers, ni par le modèle d'IA : les outils MCP de Sésame ne renvoient jamais un identifiant ou un mot de passe, seulement un résultat (« fait », « refusé », « échec ») et des étapes descriptives.</p>
+
+  <h2>L'extension Chrome « Sésame »</h2>
+  <p>L'extension ne stocke aucune donnée persistante : elle ne conserve ni identifiant, ni mot de passe, ni historique de navigation. Elle reçoit un identifiant et un mot de passe pour une seule opération de remplissage, les tape dans la page, et ne les relit jamais (elle ne renvoie que des libellés d'étapes comme « mot de passe rempli », jamais la valeur). Elle communique exclusivement avec un processus local, le pont natif Sésame, via le canal de messagerie native de Chrome — un mécanisme du navigateur, pas une requête réseau.</p>
+  <p>Le code de vérification (2e facteur) est toujours saisi par vous, au clavier ; l'extension attend, elle ne le lit jamais.</p>
+
+  <h2>Permissions demandées et pourquoi</h2>
+  <div class="tw"><table>
+    <thead><tr><th>Permission</th><th>Pourquoi</th></tr></thead>
+    <tbody>
+      <tr><td>nativeMessaging</td><td>Parler au pont local Sésame (processus sur votre Mac), pour recevoir une demande de remplissage et renvoyer un résultat.</td></tr>
+      <tr><td>tabs</td><td>Trouver un onglet déjà ouvert sur le domaine du site demandé, ou en ouvrir un nouveau sur sa page de connexion.</td></tr>
+      <tr><td>scripting</td><td>Injecter le script de remplissage dans la page, à la demande seulement — jamais déclaré en permanence sur tous les sites.</td></tr>
+      <tr><td>activeTab</td><td>Agir sur l'onglet concerné au moment de la demande.</td></tr>
+      <tr><td>storage</td><td>Retenir l'état de la connexion au pont pour l'affichage du popup — jamais un identifiant.</td></tr>
+      <tr><td>host_permissions : &lt;all_urls&gt;</td><td>Le site à remplir peut être n'importe lequel de ceux que vous enregistrez dans Sésame ; l'extension ne peut pas savoir à l'avance lesquels. Elle n'agit que sur l'onglet visé par une demande explicite, jamais en arrière-plan sur les autres.</td></tr>
+    </tbody>
+  </table></div>
+
+  <h2>Ce qui reste sur votre Mac</h2>
+  <ul>
+    <li><span class="pill">Trousseau macOS</span> les identifiants et mots de passe, chiffrés par le système.</li>
+    <li><span class="pill">~/.sesame/sites.json</span> la liste des sites enregistrés (nom, domaine, politique) — jamais un secret.</li>
+    <li><span class="pill">~/.sesame/journal.jsonl</span> le journal d'accès (qui, quand, quel résultat) — jamais une valeur de champ.</li>
+    <li><span class="pill">~/.sesame/bridge.sock</span> la socket locale du pont de l'extension, accessible uniquement par votre compte (mode 0600).</li>
+    <li><span class="pill">~/.sesame/chrome-profile</span> le profil du Chrome dédié, si vous l'utilisez plutôt que l'extension.</li>
+  </ul>
+  <p>Rien de tout cela n'est synchronisé, sauvegardé sur un serveur, ou accessible depuis un autre appareil.</p>
+
+  <h2>Ce que Sésame ne fait pas</h2>
+  <ul>
+    <li>Il ne vend ni ne partage aucune donnée : il n'y a personne à qui les vendre, tout reste local.</li>
+    <li>Il n'installe aucun outil d'analytique ou de suivi, dans l'extension comme ailleurs.</li>
+    <li>Il ne transmet aucun identifiant au modèle d'IA qui le sollicite (Claude ou tout autre client MCP).</li>
+  </ul>
+  <p>Les limites réelles — ce qu'une autre extension installée dans votre Chrome habituel pourrait observer, par exemple — sont documentées honnêtement dans <a href="https://github.com/sambisou/sesame/blob/main/SECURITY.md">SECURITY.md</a> (et sa version française <a href="https://github.com/sambisou/sesame/blob/main/SECURITY.fr.md">SECURITY.fr.md</a>), pas cachées derrière cette page.</p>
+
+  <h2>Contact et signalement</h2>
+  <p>Sésame est un projet personnel, gratuit, sous licence MIT, fourni tel quel et sans garantie. Pour signaler une faille de sécurité, utilisez l'onglet <b>Security → Report a vulnerability</b> du <a href="https://github.com/sambisou/sesame">dépôt GitHub</a> plutôt qu'une issue publique. Pour toute autre question sur cette politique, ouvrez une issue sur le même dépôt.</p>
+
+  <footer>
+    <span>Sésame · fait en Alsace</span>
+    <span><a href="https://sesamekey.app/">sesamekey.app</a> · <a href="https://github.com/sambisou/sesame">Code ouvert</a> · Aucune donnée collectée</span>
+  </footer>
+</div>
+</body>
+</html>

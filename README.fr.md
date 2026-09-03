@@ -56,6 +56,29 @@ Dans ce Chrome, la **première fois** : installe l'extension **Claude in Chrome*
 
 > Astuce : pour le lancer automatiquement au démarrage, ajoute `sesame chrome` dans un Automator « Application » placé dans *Réglages système → Général → Ouverture*.
 
+### Extension Chrome (bêta)
+
+Une alternative au Chrome dédié ci-dessus : une **extension** qui tourne dans ton Chrome **habituel** — plus de second navigateur, plus de port DevTools. Sésame la joint via un petit processus pont local, sur le canal de messagerie native de Chrome (pas le réseau).
+
+1. Ouvre `chrome://extensions`.
+2. Active le **Mode développeur** (en haut à droite).
+3. Clique **Charger l'extension non empaquetée** et choisis le dossier `extension/` de ce dépôt.
+4. Copie l'ID affiché sous le nom de l'extension (32 lettres).
+5. Lance :
+   ```bash
+   sesame install extension --id <cet-id>
+   ```
+   Cela écrit le manifeste de messagerie native (mode 0600) pour Chrome seulement. Tu utilises Brave, Arc, Chromium ou Chrome Canary ? Ajoute `--browser brave|arc|chromium|canary` : le manifeste n'est écrit que pour ce navigateur-là, jamais pour un navigateur où l'extension n'est pas chargée.
+6. Recharge l'extension (bouton ↻ sur sa carte), ouvre son popup, clique **Tester la connexion**.
+
+Si le popup répond *Native host has exited* juste après, et que ce dossier est dans `~/Downloads`, `~/Documents` ou `~/Bureau`, c'est probablement macOS qui refuse à Chrome d'exécuter `bin/sesame-bridge.sh` depuis là (un processus lancé par Chrome a les permissions de fichiers de Chrome) : autorise Chrome pour ce dossier dans *Réglages Système → Confidentialité et sécurité → Fichiers et dossiers*, ou déplace le dépôt ailleurs (par ex. `~/sesame`) et refais l'étape 5. Chrome lit le manifeste dans son propre dossier de données (`~/Library/Application Support/Google/Chrome/NativeMessagingHosts` pour le profil habituel) : c'est là que l'étape 5 l'écrit.
+
+`sesame doctor` en donne l'état : manifeste présent, pont joignable, extension connectée. Quand les trois sont au vert, `sesame_login` et `sesame_wait_code` utilisent automatiquement l'extension à la place du Chrome dédié — tu continues à naviguer normalement. Force l'un ou l'autre avec `SESAME_BROWSER=chrome-profile` ou `SESAME_BROWSER=extension` (par défaut `auto`).
+
+Une connexion par l'extension se fait en deux temps : Sésame demande d'abord à l'extension de trouver (ou d'ouvrir) l'onglet du site et de vérifier qu'un formulaire de connexion est visible ; ensuite seulement il lit le Trousseau et envoie les identifiants, pour cet onglet-là, dans les 60 secondes. Le dialogue d'accès nomme l'endroit où les identifiants seront tapés (« votre Chrome habituel (extension Sésame) » ou « le Chrome Sésame »). Si l'extension lâche **avant** l'envoi des identifiants (pont disparu, Chrome fermé pendant le premier temps), Sésame retombe sur le Chrome dédié en mode `auto` et le signale dans `steps`. Si elle cesse de répondre **après** l'envoi, il n'y a **pas de repli** : la réponse dit « l'extension n'a pas répondu, le formulaire a peut-être été soumis : vérifie l'onglet », et le journal note la tentative comme *incertaine*. Les identifiants ne sont jamais tapés deux fois dans deux navigateurs.
+
+**Limite honnête :** l'extension remplit le formulaire dans ton Chrome de tous les jours, où tu as peut-être d'autres extensions installées. Toute extension ayant accès au DOM de cette page peut, en principe, observer ce qui s'y tape — comme elle pourrait t'observer le taper toi-même. Le Chrome dédié ci-dessus n'a pas cette exposition, puisque rien d'autre n'y est installé. Choisis le compromis qui te convient ; voir [SECURITY.fr.md](SECURITY.fr.md) pour le détail.
+
 ## L'app de la barre des menus
 
 `Install Sesame.command` installe aussi **Sésame.app** dans la barre des menus (une petite graine). Tout se fait depuis là, sans terminal :
@@ -162,6 +185,7 @@ Voir toutes les configurations d'un coup : `sesame install print`.
 - **macOS uniquement** (Trousseau + boîtes de dialogue `osascript`). Node ≥ 20.
 - Chaque connexion déclenche la boîte de dialogue du Trousseau macOS avant la lecture du mot de passe : réponds **Autoriser**. Ne clique jamais **Toujours autoriser** (tout processus local pourrait alors lire l'élément en silence, voir SECURITY.fr.md).
 - Un agent qui exécute du JavaScript dans le Chrome Sésame (Claude in Chrome installé dans ce profil) peut observer ce que Sésame tape dans la page. Sésame soumet toujours et vide le champ en cas d'échec, mais ne peut pas cacher le DOM à une extension que tu as installée. Voir SECURITY.fr.md.
+- Par l'extension, si Chrome cesse de répondre après la remise des identifiants, Sésame répond « l'extension n'a pas répondu : vérifie l'onglet » et ne réessaie **pas** dans le Chrome dédié (le formulaire a peut-être déjà été soumis).
 
 ## Dépannage
 

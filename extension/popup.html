@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>Sésame</title>
+<style>
+  /* Même charte que le site : fond sombre, graine dorée. */
+  :root { --bg: #1A1714; --panel: #242019; --ink: #F2EDE3; --muted: #A89F8F; --seed: #D9A340; --ok: #7BC47F; --ko: #E06C5F; --line: #3A3229; }
+  html, body { margin: 0; background: var(--bg); color: var(--ink); font: 13px/1.45 -apple-system, "Helvetica Neue", Helvetica, Arial, sans-serif; }
+  body { width: 320px; padding: 14px 16px 16px; box-sizing: border-box; }
+  header { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+  header img { width: 28px; height: 28px; }
+  header h1 { font-size: 16px; margin: 0; font-weight: 600; letter-spacing: .2px; }
+  header small { color: var(--muted); margin-left: auto; }
+  .status { display: flex; align-items: flex-start; gap: 9px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; margin-top: 4px; flex: none; background: var(--muted); }
+  .dot.ok { background: var(--ok); box-shadow: 0 0 0 3px rgba(123,196,127,.18); }
+  .dot.ko { background: var(--ko); box-shadow: 0 0 0 3px rgba(224,108,95,.18); }
+  .status b { display: block; font-weight: 600; }
+  .status span { color: var(--muted); display: block; margin-top: 2px; word-break: break-word; }
+  .row { display: flex; gap: 8px; margin-top: 12px; align-items: center; }
+  button { flex: 1; appearance: none; border: 0; border-radius: 8px; padding: 9px 12px; font: inherit; font-weight: 600; cursor: pointer; background: var(--seed); color: #151311; }
+  button:disabled { opacity: .55; cursor: default; }
+  button.ghost { background: transparent; color: var(--ink); border: 1px solid var(--line); flex: 0 0 auto; }
+  .id { margin-top: 12px; color: var(--muted); font-size: 12px; }
+  .id code { display: block; color: var(--ink); font: 12px/1.4 ui-monospace, Menlo, monospace; user-select: all; margin-top: 3px; }
+  .hint { margin-top: 10px; color: var(--muted); font-size: 12px; }
+  .hint code { font: 11px ui-monospace, Menlo, monospace; color: var(--ink); }
+</style>
+</head>
+<body>
+  <header>
+    <img src="icons/48.png" alt="">
+    <h1>Sésame</h1>
+    <small id="version"></small>
+  </header>
+
+  <div class="status">
+    <div class="dot" id="dot"></div>
+    <div><b id="title">État inconnu</b><span id="detail">Interrogation du service worker…</span></div>
+  </div>
+
+  <div class="row">
+    <button id="test">Tester la connexion</button>
+    <button id="copy" class="ghost" title="Copier l'ID de l'extension">Copier l'ID</button>
+  </div>
+
+  <div class="id">ID de cette extension (pour <code style="display:inline">sesame install extension --id …</code>)
+    <code id="extid">…</code>
+  </div>
+
+  <p class="hint" id="hint"></p>
+
+  <script src="popup.js"></script>
+</body>
+</html>

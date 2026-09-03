@@ -1,6 +1,6 @@
 {
   "name": "sesame-mcp",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Sésame — coffre local d'identifiants pour Claude : remplit les formulaires de connexion dans Chrome sans jamais révéler les secrets à l'IA. Serveur MCP + CLI.",
   "type": "module",
   "private": true,
@@ -13,8 +13,9 @@
     "start": "node bin/sesame-mcp.js",
     "serve": "node bin/sesame.js serve",
     "pack": "rm -f sesame-macos.zip && git archive --format=zip --prefix=sesame/ -o sesame-macos.zip HEAD && (cd macos && ./scripts/make-app.sh release >/dev/null && cd build && rm -rf sesame && mkdir -p sesame/macos/build && cp -R 'Sésame.app' sesame/macos/build/ && zip -qr ../../sesame-macos.zip sesame && rm -rf sesame) && ls -la sesame-macos.zip",
-    "check": "node --check bin/sesame.js && node --check bin/sesame-mcp.js && node --check src/*.js && node test/smoke.mjs && node test/http.mjs",
-    "test:live": "node test/2fa-live.mjs"
+    "check": "node --check bin/sesame.js && node --check bin/sesame-mcp.js && node --check bin/sesame-bridge.js && node --check src/*.js && node test/smoke.mjs && node test/http.mjs && node test/bridge.mjs",
+    "test:live": "node test/2fa-live.mjs",
+    "test:extension": "node test/extension-live.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",

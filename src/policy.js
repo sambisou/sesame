@@ -54,15 +54,20 @@ export function askText({ title, message, hidden = false, defaultAnswer = "", ok
   });
 }
 
+/** Où l'utilisateur doit regarder, selon le canal : son Chrome habituel (extension) ou le Chrome Sésame (profil dédié). */
+export function channelLabel(channel) {
+  return channel === "extension" ? "votre Chrome habituel (extension Sésame)" : "le Chrome Sésame";
+}
+
 /**
  * Prévient l'utilisateur qu'un site demande un code (2e facteur) et que Sésame attend.
- * Non bloquant : l'utilisateur tape le code dans le Chrome Sésame, la détection se fait dans la page.
+ * Non bloquant : l'utilisateur tape le code dans le Chrome nommé (selon le canal), la détection se fait dans la page.
  */
-export function notifyWaitingCode(siteKey, { detail = "", timeoutSec = 180 } = {}) {
+export function notifyWaitingCode(siteKey, { detail = "", timeoutSec = 180, channel = "chrome-profile" } = {}) {
   const min = Math.max(1, Math.round(timeoutSec / 60));
   notify(
     "Sésame — code demandé",
-    `${siteKey} demande un code de vérification${detail ? " (" + detail + ")" : ""}. Tapez le code reçu par e-mail, SMS ou application dans le Chrome Sésame. J'attends jusqu'à ${min} min.`
+    `${siteKey} demande un code de vérification${detail ? " (" + detail + ")" : ""}. Tapez le code reçu par e-mail, SMS ou application dans ${channelLabel(channel)}. J'attends jusqu'à ${min} min.`
   );
 }
 

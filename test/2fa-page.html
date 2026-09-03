@@ -8,8 +8,11 @@
 <div id="s3" hidden><p>Nous vous avons envoyé un code de vérification par e-mail.</p><label>Code <input id="otp" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="6"></label><button id="ok" type="button">Valider</button><p id="err" hidden>Code incorrect.</p></div>
 <div id="s4" hidden><h2>Bienvenue, vous êtes connecté.</h2></div>
 <script>
-const q = new URLSearchParams(location.search); const no2fa = q.get("no2fa") === "1";
-next.onclick = () => { if (!email.value) return; s1.hidden = true; s2.hidden = false; };
+// ?no2fa=1 : pas de code après le mot de passe. ?hop=1 : « Suivant » envoie sur un AUTRE hôte (localhost au lieu de 127.0.0.1),
+// comme une redirection SSO : Sésame doit alors abandonner sans taper le mot de passe. ?noform=1 : page sans formulaire.
+const q = new URLSearchParams(location.search); const no2fa = q.get("no2fa") === "1"; const hop = q.get("hop") === "1";
+if (q.get("noform") === "1") { s1.hidden = true; document.body.insertAdjacentHTML("beforeend", "<p>Page d'accueil, sans formulaire.</p>"); }
+next.onclick = () => { if (!email.value) return; if (hop) { location.href = "http://localhost:" + location.port + "/2fa-page.html?hopped=1"; return; } s1.hidden = true; s2.hidden = false; };
 go.onclick = () => { if (pwd.value !== "bonmotdepasse") return; s2.hidden = true; if (no2fa) { s4.hidden = false; } else { s3.hidden = false; } };
 ok.onclick = () => { if (otp.value === "424242") { s3.hidden = true; s4.hidden = false; } else { err.hidden = false; } };
 </script>

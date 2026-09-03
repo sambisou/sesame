@@ -1,0 +1,16 @@
+{
+  "manifest_version": 3,
+  "name": "Sésame",
+  "version": "0.5.0",
+  "description": "Remplit vos formulaires de connexion à la demande du serveur Sésame installé sur votre Mac. Rien ne quitte votre ordinateur.",
+  "minimum_chrome_version": "116",
+  "permissions": ["nativeMessaging", "tabs", "scripting", "storage", "notifications"],
+  "host_permissions": ["<all_urls>"],
+  "background": { "service_worker": "background.js" },
+  "action": {
+    "default_title": "Sésame",
+    "default_popup": "popup.html",
+    "default_icon": { "16": "icons/16.png", "48": "icons/48.png", "128": "icons/128.png" }
+  },
+  "icons": { "16": "icons/16.png", "48": "icons/48.png", "128": "icons/128.png" }
+}

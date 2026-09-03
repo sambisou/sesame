@@ -2,6 +2,7 @@
 // CLI Sésame — l'interface de l'utilisateur. Les secrets sont saisis ici, au clavier, jamais via Claude.
 import fs from "node:fs";
 import os from "node:os";
+import net from "node:net";
 import path from "node:path";
 import { spawn, execFileSync } from "node:child_process";
 import readline from "node:readline";
@@ -38,10 +39,14 @@ Usage : sesame <commande> [options]
                           Ajoute Sésame comme serveur MCP à Claude Code et/ou Claude Desktop (Cowork).
   install <codex|gemini|cursor|vscode|windsurf|chatgpt|print>
                           Affiche la configuration à coller pour un autre client MCP (rien n'est écrit).
+  install extension [--id <id>] [--browser chrome|brave|arc|chromium|canary]
+                          Extension Chrome « Sésame » (bêta), pour ton Chrome habituel. Sans --id : marche
+                          à suivre. Avec --id : écrit le manifeste de messagerie native (0600) pour le seul
+                          navigateur demandé (défaut : chrome).
   serve [--port <n>]      Sert Sésame en HTTP local (Streamable HTTP, jeton obligatoire) pour les clients
                           qui ne lancent pas de processus : ChatGPT via tunnel, agents distants, etc.
   token [--rotate]        Affiche (ou renouvelle) le jeton du serveur HTTP.
-  doctor                  Vérifie l'installation (Trousseau, Chrome, sites, verrou).
+  doctor                  Vérifie l'installation (Trousseau, Chrome, extension, sites, verrou).
   help                    Cette aide.
 
 Dossier : ${HOME}
@@ -269,7 +274,94 @@ ${j({ mcpServers: { sesame: stdio("windsurf") } })}`,
   for (const k of keys) console.log(blocks[k] + "\n");
 }
 
+const NATIVE_HOST_NAME = "app.sesamekey.bridge";
+const EXTENSION_ID_RE = /^[a-p]{32}$/;
+const BRIDGE_SOCKET = path.join(HOME, "bridge.sock");
+const EXTENSION_DIR = path.join(ROOT, "extension");
+const BRIDGE_SH = path.join(ROOT, "bin", "sesame-bridge.sh");
+
+/** Dossiers « NativeMessagingHosts » des navigateurs basés sur Chromium, sur macOS (clé = valeur de --browser). */
+function nativeMessagingDirs() {
+  const base = path.join(os.homedir(), "Library/Application Support");
+  return [
+    { key: "chrome", name: "Google Chrome", dir: path.join(base, "Google/Chrome/NativeMessagingHosts") },
+    { key: "canary", name: "Chrome Canary", dir: path.join(base, "Google/Chrome Canary/NativeMessagingHosts") },
+    { key: "chromium", name: "Chromium", dir: path.join(base, "Chromium/NativeMessagingHosts") },
+    { key: "brave", name: "Brave", dir: path.join(base, "BraveSoftware/Brave-Browser/NativeMessagingHosts") },
+    { key: "arc", name: "Arc", dir: path.join(base, "Arc/User Data/NativeMessagingHosts") },
+  ];
+}
+
+/**
+ * `sesame install extension [--id <id>] [--browser <clé>]` : marche à suivre sans --id ; avec --id, écrit le
+ * manifeste de messagerie native (0600) pour le SEUL navigateur demandé (défaut chrome) — pas de manifeste
+ * dans un navigateur où l'extension n'est pas chargée.
+ */
+function installExtension(id, browser = "chrome") {
+  if (!id) {
+    console.log(`Extension Chrome « Sésame » (bêta) — pour ton Chrome habituel, sans second profil.
+
+1. Ouvre chrome://extensions
+2. Active le « Mode développeur » (en haut à droite)
+3. Clique « Charger l'extension non empaquetée » et choisis ce dossier :
+   ${EXTENSION_DIR}
+4. Copie l'ID affiché sous le nom de l'extension (32 lettres entre a et p)
+5. Relance : sesame install extension --id <cet-id>   (ajoute --browser brave|arc|chromium|canary si ce n'est pas Chrome)
+6. Recharge l'extension (bouton ↻ sur sa carte), ouvre son popup, clique « Tester la connexion »
+
+« sesame doctor » vérifie ensuite : manifeste présent, pont joignable, extension connectée.`);
+    return;
+  }
+  const key = String(id).trim().toLowerCase();
+  if (!EXTENSION_ID_RE.test(key)) throw new Error(`ID d'extension invalide : « ${id} ». Un ID Chrome fait 32 lettres entre a et p, copié depuis chrome://extensions.`);
+  const target = nativeMessagingDirs().find(b => b.key === String(browser || "chrome").trim().toLowerCase());
+  if (!target) throw new Error(`Navigateur inconnu : « ${browser} ». Valeurs acceptées pour --browser : chrome (défaut), brave, arc, chromium, canary.`);
+  if (!fs.existsSync(path.dirname(target.dir))) throw new Error(`${target.name} ne semble pas installé (dossier ${path.dirname(target.dir)} absent).`);
+  if (!fs.existsSync(BRIDGE_SH)) console.log(`⚠️  ${BRIDGE_SH} n'existe pas encore sur ce poste : le manifeste est écrit quand même, il faudra que le pont natif soit en place pour que l'extension réponde.`);
+  const manifest = {
+    name: NATIVE_HOST_NAME,
+    description: "Sésame bridge",
+    path: BRIDGE_SH,
+    type: "stdio",
+    allowed_origins: [`chrome-extension://${key}/`],
+  };
+  // Chrome lance les hôtes natifs avec un PATH minimal : on fige le chemin du node courant pour bin/sesame-bridge.sh.
+  try { ensureHome(); fs.writeFileSync(path.join(HOME, "node-path"), process.execPath + "\n", { mode: 0o600 }); } catch {}
+  // Le lanceur doit rester non modifiable par d'autres : Chrome exécute ce qui s'y trouve sans vérification.
+  try { fs.chmodSync(BRIDGE_SH, 0o755); } catch {}
+  fs.mkdirSync(target.dir, { recursive: true });
+  const file = path.join(target.dir, NATIVE_HOST_NAME + ".json");
+  fs.writeFileSync(file, JSON.stringify(manifest, null, 2) + "\n", { mode: 0o600 });
+  try { fs.chmodSync(file, 0o600); } catch {} // un manifeste préexistant garde sinon son ancien mode
+  logEvent({ action: "install_extension", caller: "cli", result: "ok", detail: `id ${key}, ${target.name}` });
+  console.log(`✅ ${target.name} : ${file} (0600)\n   Lanceur exécuté par ${target.name} : ${BRIDGE_SH}\n   Ce fichier et ce dépôt doivent rester à toi seul (chmod 755, hors dossier partagé) : ${target.name} l'exécute sans vérification.`);
+  if (/^\/Users\/[^/]+\/(Downloads|Documents|Desktop)\//.test(ROOT)) {
+    console.log(`\n⚠️  Ce dossier est dans ${ROOT.split("/")[3]} : macOS peut refuser à Chrome d'y exécuter le pont (« Native host has exited »).\n   Autorise Chrome pour ce dossier (Réglages Système → Confidentialité et sécurité → Fichiers et dossiers), ou déplace Sésame (ex. ~/sesame) et relance cette commande.`);
+  }
+  console.log(`\nRecharge l'extension dans chrome://extensions (bouton ↻), puis « Tester la connexion » dans son popup.\nVérifie avec : sesame doctor`);
+}
+
+/** Ping du pont natif sur ~/.sesame/bridge.sock (JSON une ligne, réponse une ligne). null = pas de pont, undefined = pas de réponse à temps. */
+function pingBridge(timeoutMs = 3000) { // le pont attend lui-même jusqu'à 2 s le pong de l'extension
+  return new Promise(resolve => {
+    if (!fs.existsSync(BRIDGE_SOCKET)) return resolve(null);
+    let settled = false;
+    const done = v => { if (settled) return; settled = true; clearTimeout(timer); try { sock.destroy(); } catch {} resolve(v); };
+    const timer = setTimeout(() => done(undefined), timeoutMs);
+    const sock = net.createConnection(BRIDGE_SOCKET);
+    let buf = "";
+    sock.on("connect", () => sock.write(JSON.stringify({ type: "ping" }) + "\n"));
+    sock.on("data", d => {
+      buf += d.toString("utf8");
+      const i = buf.indexOf("\n");
+      if (i >= 0) { try { done(JSON.parse(buf.slice(0, i))); } catch { done(undefined); } }
+    });
+    sock.on("error", () => done(undefined));
+  });
+}
+
 function install(target) {
+  if (target === "extension") return installExtension(opt("--id"), opt("--browser") || "chrome");
   if (SNIPPET_TARGETS.includes(target)) return printSnippets(target);
   const entry = { command: nodeBin(), args: [MCP_BIN, "cowork"] };
   const results = [];
@@ -336,6 +428,13 @@ async function doctor() {
   } catch {
     ok(false, `Chrome non joignable sur ${CDP_URL} → lance : sesame chrome`);
   }
+
+  const hasManifest = nativeMessagingDirs().some(({ dir }) => fs.existsSync(path.join(dir, NATIVE_HOST_NAME + ".json")));
+  ok(hasManifest, `Extension : manifeste natif ${hasManifest ? "présent" : "absent"} (sesame install extension --id <id>)`);
+  const ping = await pingBridge();
+  ok(!!ping, `Extension : pont natif ${ping ? "joignable" : "injoignable"} sur ${BRIDGE_SOCKET}`);
+  if (ping) ok(!!ping.extension, `Extension : ${ping.extension ? "connectée" : "pont actif, extension non connectée (recharge-la dans chrome://extensions)"}`);
+
   console.log(`\nJournal : ${JOURNAL_FILE}`);
 }
 

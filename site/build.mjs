@@ -25,5 +25,7 @@ const head = `<!doctype html>
 fs.mkdirSync("dist/img", { recursive: true });
 for (const f of fs.readdirSync("img")) fs.copyFileSync("img/" + f, "dist/img/" + f);
 fs.writeFileSync("dist/index.html", head + body + "\n</body>\n</html>\n");
+fs.copyFileSync("privacy.html", "dist/privacy.html"); // page de confidentialité (déjà un document complet) : requise par le Chrome Web Store
 fs.writeFileSync("dist/_headers", "/*\n  X-Content-Type-Options: nosniff\n  Referrer-Policy: strict-origin-when-cross-origin\n  Permissions-Policy: camera=(), microphone=(), geolocation=()\n");
 console.log("dist/index.html", fs.statSync("dist/index.html").size, "octets");
+console.log("dist/privacy.html", fs.statSync("dist/privacy.html").size, "octets");

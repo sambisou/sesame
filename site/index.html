@@ -191,6 +191,7 @@
   @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .panel.no li code { background: rgba(0,0,0,.35); } }
   .panel li::before { content: ""; flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--ok); transform: translateY(-2px); }
   .panel.no li::before { background: var(--no); }
+  .panel ul[style] li::before { background: var(--dot); }
 
   /* Steps */
   .steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px; margin-top: 48px; }
@@ -436,6 +437,34 @@
   </div>
 </section>
 
+<section id="chrome">
+  <div class="wrap">
+    <p class="eyebrow">Le navigateur</p>
+    <h2>Pourquoi une fenêtre Chrome à part, et comment on s'en passe.</h2>
+    <p class="lede" style="margin-top:20px">Depuis sa version 136, Chrome interdit à tout programme de piloter votre profil habituel. C'est une protection contre les logiciels malveillants, et Sésame la respecte. Voici ce que ça change, et ce qu'on a fait pour que ça ne se voie presque pas.</p>
+    <div class="split">
+      <div class="panel">
+        <h3>Aujourd'hui : un Chrome Sésame, discret</h3>
+        <ul>
+          <li>Sésame lance lui-même un Chrome avec son propre profil, réduit dans le Dock. Vous n'avez rien à ouvrir.</li>
+          <li>Il reste en arrière-plan pendant la connexion et ne se déplie que si un site attend un code de votre part.</li>
+          <li>Vos sessions y restent ouvertes : une fois connecté à EDF, plus besoin de Sésame jusqu'à expiration.</li>
+          <li>Rien d'autre n'y est installé : aucune extension tierce ne peut y observer ce que Sésame tape.</li>
+        </ul>
+      </div>
+      <div class="panel no" style="background:var(--seed-soft)">
+        <h3>Bientôt : l'extension, dans votre Chrome habituel</h3>
+        <ul style="--dot:var(--seed)">
+          <li>Une extension Sésame remplit le formulaire directement dans votre Chrome de tous les jours. Plus de fenêtre à part.</li>
+          <li>Elle reçoit les identifiants par le canal de messagerie native de Chrome, un tuyau local entre l'extension et Sésame. Rien ne passe par le réseau, l'extension ne stocke rien.</li>
+          <li>La graine de la barre des menus détecte si l'extension est en place et vous guide en trois clics si elle manque. Sésame la choisit quand elle répond, sinon le Chrome à part.</li>
+          <li>À savoir : dans votre Chrome habituel, une autre extension ayant accès à la page pourrait observer la frappe, comme elle pourrait vous observer vous-même. À vous de choisir.</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
 <section id="security">
   <div class="wrap">
     <p class="eyebrow">Sécurité</p>
@@ -539,6 +568,10 @@
       <details>
         <summary>Et Claude, il pourrait tricher pour obtenir un mot de passe ?</summary>
         <p>Il n'a pas de commande pour ça. Sésame ne lui propose que « connecte-toi », « liste les sites », « lis le journal ». Même en insistant, la seule chose qu'il obtient est « fait », « refusé » ou « échec ».</p>
+      </details>
+      <details>
+        <summary>Pourquoi une deuxième fenêtre Chrome ?</summary>
+        <p>Chrome refuse depuis sa version 136 qu'un programme pilote votre profil habituel. Sésame utilise donc un Chrome à profil séparé, qu'il lance lui-même, réduit, et qu'il ne déplie que pour un code. L'extension Chrome, en préparation, supprimera cette fenêtre en travaillant dans votre Chrome de tous les jours.</p>
       </details>
       <details>
         <summary>Pourquoi mon Mac me demande-t-il mon mot de passe de session ?</summary>

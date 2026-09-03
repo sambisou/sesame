@@ -31,6 +31,22 @@ final class Windows: NSObject, NSWindowDelegate {
         show(key: "add", title: "Sésame — ajouter un site", store: store, request: nil) { _ in }
     }
 
+    /// Installation guidée de l'extension Chrome.
+    func showExtensionSetup(store: Store) {
+        let key = "extension"
+        if let w = open[key] { w.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true); return }
+        let w = NSWindow(contentViewController: NSHostingController(rootView: ExtensionSetupView(store: store)))
+        w.title = "Sésame — extension Chrome"
+        w.styleMask = [.titled, .closable]
+        w.isReleasedWhenClosed = false
+        w.center()
+        w.delegate = self
+        open[key] = w
+        onClose[key] = {}
+        w.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
     private func show(key: String, title: String, store: Store, request: SiteRequest?, onDone: @escaping (Bool) -> Void) {
         if let w = open[key] { w.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true); return }
         let host = NSHostingController(rootView: CredentialForm(store: store, request: request) { [weak self] saved in

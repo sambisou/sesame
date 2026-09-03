@@ -25,6 +25,8 @@ struct Panel: View {
                     if store.sites.isEmpty { emptyLine("Aucun site. Ajoute-en un ci-dessous : Claude pourra s'y connecter sans jamais voir le mot de passe.") }
                     ForEach(store.sites) { s in siteRow(s) }
                     addBlock
+                    sectionTitle("Navigateur", trailing: "")
+                    extensionRow
                     sectionTitle("Journal", trailing: "\(min(visibleEvents.count, 8)) dernières")
                     if visibleEvents.isEmpty { emptyLine("Rien encore.") }
                     ForEach(visibleEvents.prefix(8)) { e in eventRow(e) }
@@ -45,7 +47,7 @@ struct Panel: View {
     }
 
     private var listHeight: CGFloat {
-        let rows = CGFloat(store.sites.count) * 58 + (confirmRemove == nil ? 0 : 34) + CGFloat(min(store.events.count, 8)) * 24 + 40 + 70
+        let rows = CGFloat(store.sites.count) * 58 + (confirmRemove == nil ? 0 : 34) + CGFloat(min(visibleEvents.count, 8)) * 24 + 40 + 70 + (store.extensionStatus.level == 3 ? 56 : 84)
         return min(max(rows, 180), 560)
     }
 
@@ -122,6 +124,29 @@ struct Panel: View {
         }
         .buttonStyle(.plain).foregroundStyle(Palette.seed)
         .padding(.horizontal, 14).padding(.vertical, 8)
+    }
+
+    // MARK: extension Chrome
+
+    /// État de l'extension et, si elle manque, l'invitation à l'installer (fenêtre guidée).
+    private var extensionRow: some View {
+        let st = store.extensionStatus
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Circle().fill(st.level == 3 ? Palette.ok : st.level > 0 ? Palette.wait : Palette.muted.opacity(0.4)).frame(width: 7, height: 7)
+                Text(st.label).font(.system(size: 11.5, weight: .medium)).lineLimit(1)
+                Spacer()
+                Button(st.level == 3 ? "Réglages…" : "Installer…") { Windows.shared.showExtensionSetup(store: store) }.controlSize(.mini)
+            }
+            if st.level < 3 {
+                Text(st.level == 0
+                     ? "Sans extension, Sésame utilise un Chrome à part, lancé réduit, qui ne s'ouvre que pour un code."
+                     : st.level == 1 ? "Chargez le dossier « extension » dans chrome://extensions, puis rechargez-la."
+                     : "Ouvrez Chrome (ou rechargez l'extension) pour qu'elle se connecte au pont.")
+                    .font(.system(size: 10.5)).foregroundStyle(Palette.muted).fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(.horizontal, 14).padding(.vertical, 6)
     }
 
     // MARK: journal

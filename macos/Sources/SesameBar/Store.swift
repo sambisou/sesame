@@ -29,6 +29,7 @@ final class Store {
     var events: [Event] = []
     var locked = false
     var chromeUp = false
+    var extensionStatus = ExtensionStatus()
     var lastError: String?
 
     let home: URL
@@ -76,6 +77,26 @@ final class Store {
         loadJournal()
         checkChrome()
         pollRequests()
+        tick += 1
+        if tick % 3 == 1 { refreshExtension() }   // toutes les 6 s : la sonde peut attendre jusqu'à une seconde
+    }
+
+    private var tick = 0
+    private var probing = false
+
+    /// Sonde l'extension Chrome hors du thread principal (manifeste, pont, extension).
+    func refreshExtension() {
+        if probing { return }
+        probing = true
+        let sock = home.appendingPathComponent("bridge.sock").path
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let st = ChromeExtension.probe(socketPath: sock)
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.probing = false
+                if st != self.extensionStatus { self.extensionStatus = st }
+            }
+        }
     }
 
     /// Relit sites.json. Renvoie false si le fichier existe mais est illisible (on n'écrit alors jamais par-dessus).

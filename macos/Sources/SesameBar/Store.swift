@@ -31,6 +31,11 @@ final class Store {
     var chromeUp = false
     var extensionStatus = ExtensionStatus()
     var lastError: String?
+    /// Sites dont l'élément Trousseau n'appartient pas à l'assistant (créés avant 0.5.1, ou par une autre
+    /// application) : `migrateKeychain` les corrige. Voir checkMigration.
+    var sitesToMigrate: [String] = []
+    var migrating = false
+    var migrationReport: String?
 
     let home: URL
     private var raw: [String: Any] = [:]
@@ -79,10 +84,12 @@ final class Store {
         pollRequests()
         tick += 1
         if tick % 3 == 1 { refreshExtension() }   // toutes les 6 s : la sonde peut attendre jusqu'à une seconde
+        if tick % 30 == 2 { checkMigration() }    // toutes les 60 s : dump-keychain -a est coûteux (gros Trousseau)
     }
 
     private var tick = 0
     private var probing = false
+    private var checkingMigration = false
 
     /// Sonde l'extension Chrome hors du thread principal (manifeste, pont, extension).
     func refreshExtension() {
@@ -95,6 +102,94 @@ final class Store {
                 guard let self else { return }
                 self.probing = false
                 if st != self.extensionStatus { self.extensionStatus = st }
+            }
+        }
+    }
+
+    /// Sites dont l'élément Trousseau n'appartient pas à l'assistant : `dump-keychain -a` est lent (jusqu'à
+    /// plusieurs dizaines de secondes sur un gros Trousseau), donc hors du thread principal, et rate-limité
+    /// par l'appelant (voir `reload`). Sans assistant embarqué, rien à migrer (les lectures ne sont de toute
+    /// façon jamais silencieuses).
+    func checkMigration() {
+        guard let helper = keychainHelperPath else { if !sitesToMigrate.isEmpty { sitesToMigrate = [] }; return }
+        if checkingMigration { return }
+        checkingMigration = true
+        let keys = sites.map { $0.id }
+        let svc = service
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let need = Store.sitesNeedingMigration(keys, service: svc, helperPath: helper)
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.checkingMigration = false
+                if self.sitesToMigrate != need { self.sitesToMigrate = need }
+            }
+        }
+    }
+
+    /// Même détection que `trustedAppsByAccount` côté CLI (src/keychain.js) : un compte est de confiance
+    /// pour l'assistant seulement si sa PREMIÈRE entrée d'accès (`decrypt`, juste après « access: ») porte
+    /// « applications (N>0) » ET que le chemin de l'assistant apparaît dans cette même entrée. Vérifié sur
+    /// un Trousseau réel : un élément créé par l'assistant (SecItemAdd, sans ACL explicite) a en entrée 0
+    /// « applications (1): <chemin de l'assistant> (OK) » ; un élément créé par l'ancien outil
+    /// (`security … -T ""`) a en entrée 0 « applications (0): » (partition `apple-tool:` en entrée 3, pas
+    /// visible ici) — les deux cas sont donc déjà distingués par le premier « applications (N) » rencontré,
+    /// pas besoin de chercher spécifiquement la partition. Comparaison en NFC des deux côtés : `dump-keychain`
+    /// rend les chemins accentués en NFD (« é » décomposé), alors que le dépôt s'appelle « Sésame ».
+    private static func sitesNeedingMigration(_ keys: [String], service: String, helperPath: String) -> [String] {
+        guard !keys.isEmpty else { return [] }
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/security")
+        p.arguments = ["dump-keychain", "-a"]
+        let outPipe = Pipe(); p.standardOutput = outPipe; p.standardError = Pipe()
+        guard (try? p.run()) != nil else { return keys }
+        p.waitUntilExit()
+        let dump = String(data: outPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+        let helperNFC = helperPath.precomposedStringWithCanonicalMapping
+        var trustedHelperOnly: [String: Bool] = [:]
+        for block in dump.components(separatedBy: "\nkeychain: ") {
+            guard block.contains("\"svce\"<blob>=\"\(service)\"") && block.contains("access:") else { continue }
+            guard let acct = firstMatch(#""acct"<blob>="([^"]+)""#, in: block) else { continue }
+            guard let aclRange = block.range(of: "access:") else { continue }
+            let acl = String(block[aclRange.upperBound...])
+            let n = Int(firstMatch(#"applications \((\d+)\)"#, in: acl) ?? "") ?? (acl.contains("/usr/bin/security") ? 1 : 0)
+            trustedHelperOnly[acct] = n > 0 && acl.precomposedStringWithCanonicalMapping.contains(helperNFC)
+        }
+        return keys.filter { trustedHelperOnly[$0] != true }
+    }
+
+    private static func firstMatch(_ pattern: String, in text: String) -> String? {
+        guard let re = try? NSRegularExpression(pattern: pattern) else { return nil }
+        let ns = text as NSString
+        guard let m = re.firstMatch(in: text, range: NSRange(location: 0, length: ns.length)), m.numberOfRanges > 1 else { return nil }
+        return ns.substring(with: m.range(at: 1))
+    }
+
+    /// Migre les sites donnés (voir `sitesToMigrate`) : relit chacun via `/usr/bin/security -w` (la boîte de
+    /// dialogue du Trousseau apparaît une fois par site, hors thread principal — elle ne bloque pas la
+    /// barre), le réécrit via l'assistant embarqué (silencieux), vérifie avec `has`, journalise ok/échec
+    /// (jamais la valeur). Le compte-rendu revient sur la file principale.
+    func migrateKeychain(_ keys: [String], completion: @escaping (_ ok: Int, _ total: Int) -> Void) {
+        guard let helper = keychainHelperPath, !keys.isEmpty else { completion(0, 0); return }
+        let svc = service
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self else { DispatchQueue.main.async { completion(0, 0) }; return }
+            var outcomes: [(String, Bool)] = []
+            for key in keys {
+                let read = self.security(["find-generic-password", "-s", svc, "-a", key, "-w"])
+                guard read.status == 0 else { outcomes.append((key, false)); continue }
+                let value = read.out.trimmingCharacters(in: .newlines)
+                guard let data = value.data(using: .utf8) else { outcomes.append((key, false)); continue }
+                let writeStatus = self.runHelper(helper, ["set", svc, key], stdin: data)
+                guard writeStatus == 0 else { outcomes.append((key, false)); continue }
+                let hasStatus = self.runHelper(helper, ["has", svc, key])
+                outcomes.append((key, hasStatus == 0))
+            }
+            DispatchQueue.main.async {
+                for (key, ok) in outcomes {
+                    self.log(site: key, action: "keychain_migrate", result: ok ? "ok" : "échec")
+                }
+                self.checkMigration()
+                completion(outcomes.filter { $0.1 }.count, outcomes.count)
             }
         }
     }

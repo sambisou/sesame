@@ -478,7 +478,7 @@
       </figure>
       <figure class="shot">
         <img src="img/dialogue-acces.png" alt="La demande d'accès Sésame : qui demande, quel site, pourquoi, boutons Refuser et Autoriser" loading="lazy">
-        <figcaption><b>3 · La demande d'accès, sur un site « Me demander ».</b> Qui demande, quel site, pourquoi. « Refuser » est le bouton par défaut. La première fois seulement, le Trousseau d'Apple demande votre accord pour l'assistant Sésame : cliquez « Toujours autoriser ». Ensuite, cette fenêtre ne revient plus.</figcaption>
+        <figcaption><b>3 · La demande d'accès, sur un site « Me demander ».</b> Qui demande, quel site, pourquoi. « Refuser » est le bouton par défaut. Le Trousseau d'Apple, lui, ne demande rien pour un site enregistré depuis la 0.5.1 ; pour un site plus ancien, une seule fois, lors de <code>sesame migrate-keychain</code>.</figcaption>
       </figure>
       <figure class="shot">
         <img src="img/bandeau-code.png" alt="Le bandeau Sésame en haut de la page qui attend la saisie du code reçu par e-mail ou SMS" loading="lazy">
@@ -628,7 +628,7 @@
       </details>
       <details>
         <summary>Pourquoi mon Mac me demande-t-il mon mot de passe de session ?</summary>
-        <p>Sésame a son propre assistant, reconnu par le Trousseau d'Apple. À la première utilisation d'un site, le Trousseau demande une fois votre accord pour cet assistant : cliquez « Toujours autoriser ». Ensuite, plus rien — Sésame se connecte tout seul, sans redemander votre mot de passe de session.</p>
+        <p>Pour un site enregistré depuis la 0.5.1, il ne le demande pas : l'assistant Trousseau de Sésame crée et relit lui-même l'élément, en silence, dès le premier accès. Pour un site plus ancien, une seule commande règle ça pour de bon : <code>sesame migrate-keychain</code> — une fenêtre du Trousseau par site, vous cliquez « Autoriser », et c'est terminé.</p>
       </details>
       <details>
         <summary>Comment installer l'extension Chrome ?</summary>
@@ -692,7 +692,7 @@
     },
     {
       title: "Automatique, ou vous validez",
-      text: "Sur un site en Automatique, rien à faire : Sésame se connecte tout seul. Sur un site « Me demander », une fenêtre Sésame apparaît — celle du Trousseau a disparu, grâce à l’assistant Sésame."
+      text: "Sur un site en Automatique, rien à faire : Sésame se connecte tout seul. Sur un site « Me demander », une seule fenêtre apparaît, celle de Sésame : Autoriser ou Refuser."
     },
     {
       title: "Sésame remplit",

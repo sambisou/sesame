@@ -139,13 +139,13 @@ sesame log --site edf -n 100
 
 Each line of `~/.sesame/journal.jsonl` records: timestamp, site, action (`login`, `2fa`, `open_login`, `policy`, `lock`…), caller (`cowork`, `claude-code`, `cli`, `http`…), result (`authorized`, `refused`, `succeeded`, `failed`, `error` — in French in the file) and a readable detail. Claude can read it through `sesame_journal` to report back to you, but cannot erase it.
 
-## The window you will see at every login
+## One window, and only if you want it
 
 Sésame's first principle is to automate: for a site set to **Automatique**, nothing is shown, the login just happens. So there is only **one** window to know about, and it only appears for a site set to **Me demander** (ask):
 
 1. **Sésame — demande d'accès.** Who is asking (Cowork, Claude Code…), which site, and why. *Refuser* is the default; click **Autoriser** to let Sésame fill the form.
 
-The macOS Keychain no longer asks at every login since 0.5.0: Sésame reads the password through its signed **Keychain assistant** (`sesame-keychain`, shipped inside Sésame.app), and that assistant is declared trusted the moment the site is created (`sesame add` or the Sésame window) — every read after that is silent, no dialog at all. The one exception is a site registered before 0.5.0 (or before 0.3.0): for that one, the Keychain will still show its dialog — but only once, not at every login — and the right answer is now **Always Allow**, because the requester named in the dialog is `sesame-keychain`, Sésame's own signed assistant, never `security`. `sesame doctor` tells you which of your sites are still in that state; re-registering them (`sesame add <site>`) skips even that first click. Full details and guarantees: [SECURITY.md](SECURITY.md).
+The macOS Keychain asks nothing at all for sites registered since 0.5.1: the signed **Keychain assistant** (`sesame-keychain`, shipped inside Sésame.app) both creates and reads back each item itself, which makes it silent from the very first access — no dialog, ever, and no "Always Allow" to click. The one exception is a site registered before 0.5.1, whose item still belongs to the old tool. `sesame doctor` tells you which; fix them all at once with `sesame migrate-keychain` — one Keychain window per site (click **Allow**), once, then it's settled for good. Full details and guarantees: [SECURITY.md](SECURITY.md).
 
 Then, if the site asks for a code (SMS, e-mail, app), a banner appears at the top of the Sésame Chrome and Sésame waits for you.
 
@@ -191,7 +191,7 @@ Print every configuration at once: `sesame install print`.
 - **Captcha**: Sésame does not solve it; it flags it (`hint`) and you do it in Chrome.
 - **Unusual forms** (fields without `type`, Shadow DOM): give the selectors with `--user-sel / --pass-sel / --submit-sel / --code-sel`. To find them: right-click the field → Inspect.
 - **macOS only** (Keychain + `osascript` dialogs). Node 20 or later.
-- Since 0.5.0, the password read goes through the signed Keychain assistant (`sesame-keychain`): the Keychain dialog appears at most once per site, not at every login, and **Always Allow** is then the right answer there (the requester is the assistant, not `security`) — see SECURITY.md.
+- Since 0.5.1, the password read goes through the signed Keychain assistant (`sesame-keychain`), which creates each item itself: no Keychain dialog at all for a site registered from now on. A site registered before 0.5.1 still belongs to the old tool; `sesame doctor` flags it and `sesame migrate-keychain` fixes it (one Keychain window, click **Allow**, once) — see SECURITY.md.
 - An agent running JavaScript in the Sésame Chrome (Claude in Chrome installed there) can observe what Sésame types into the page. Sésame always submits and clears the field on failure, but cannot hide the DOM from an extension you installed. See SECURITY.md.
 - Through the extension, if Chrome stops answering after the credentials were handed over, Sésame reports "the extension did not respond: check the tab" and does **not** retry in the dedicated Chrome (the form may already have been submitted).
 

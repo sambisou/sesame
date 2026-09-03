@@ -24,6 +24,7 @@ struct Panel: View {
                     sectionTitle("Sites", trailing: "\(store.sites.count)")
                     if store.sites.isEmpty { emptyLine("Aucun site. Ajoute-en un ci-dessous : Claude pourra s'y connecter sans jamais voir le mot de passe.") }
                     ForEach(store.sites) { s in siteRow(s) }
+                    if !store.sitesToMigrate.isEmpty { migrationRow }
                     addBlock
                     sectionTitle("Navigateur", trailing: "")
                     extensionRow
@@ -48,7 +49,8 @@ struct Panel: View {
 
     private var listHeight: CGFloat {
         let rows = CGFloat(store.sites.count) * 58 + (confirmRemove == nil ? 0 : 34) + CGFloat(min(visibleEvents.count, 8)) * 24 + 40 + 70 + (store.extensionStatus.level == 3 ? 56 : 84)
-        return min(max(rows, 180), 560)
+            + (store.sitesToMigrate.isEmpty ? 0 : (store.migrationReport == nil ? 34 : 52))
+        return min(max(rows, 180), 620)
     }
 
     // MARK: en-tête
@@ -124,6 +126,43 @@ struct Panel: View {
         }
         .buttonStyle(.plain).foregroundStyle(Palette.seed)
         .padding(.horizontal, 14).padding(.vertical, 8)
+    }
+
+    // MARK: migration Trousseau
+
+    /// Sites créés avant 0.5.1 (ou par une autre application) : leur élément Trousseau redemandera à chaque
+    /// lecture tant qu'il n'a pas été réécrit par l'assistant. « Migrer… » le fait pour tous d'un coup, ici
+    /// même dans l'app : une fenêtre du Trousseau par site (« Autoriser »), puis c'est silencieux.
+    private var migrationRow: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack(spacing: 8) {
+                Image(systemName: "exclamationmark.triangle.fill").font(.system(size: 10)).foregroundStyle(Palette.wait)
+                Text("\(store.sitesToMigrate.count) site\(store.sitesToMigrate.count > 1 ? "s" : "") à migrer pour une connexion sans fenêtre")
+                    .font(.system(size: 11)).foregroundStyle(Palette.muted).fixedSize(horizontal: false, vertical: true)
+                Spacer()
+                if store.migrating {
+                    ProgressView().controlSize(.mini)
+                } else {
+                    Button("Migrer…") { migrate() }.controlSize(.mini)
+                }
+            }
+            if let r = store.migrationReport {
+                Text(r).font(.system(size: 10.5)).foregroundStyle(Palette.muted)
+            }
+        }
+        .padding(.horizontal, 14).padding(.vertical, 6)
+    }
+
+    /// Lance la migration de tous les sites signalés, séquentiellement, dans l'app : une fenêtre du
+    /// Trousseau par site (l'utilisateur clique « Autoriser »), puis réécriture silencieuse par l'assistant.
+    private func migrate() {
+        store.migrationReport = nil
+        store.migrating = true
+        let keys = store.sitesToMigrate
+        store.migrateKeychain(keys) { ok, total in
+            store.migrating = false
+            store.migrationReport = total == 0 ? nil : "\(ok)/\(total) site(s) migré(s)."
+        }
     }
 
     // MARK: extension Chrome

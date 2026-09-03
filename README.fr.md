@@ -134,13 +134,13 @@ sesame log --site edf -n 100
 
 Chaque ligne de `~/.sesame/journal.jsonl` : horodatage, site, action (`login`, `open_login`, `policy`, `lock`…), appelant (`cowork`, `claude-code`, `cli`), résultat (`autorisé`, `refusé`, `réussi`, `échec`, `erreur`) et un détail lisible. Claude peut le lire via `sesame_journal` pour te rendre compte, mais pas l'effacer.
 
-## La fenêtre que tu verras à chaque connexion
+## Une seule fenêtre, et seulement si tu le veux
 
 Le principe premier de Sésame est d'automatiser : pour un site en règle **Automatique**, rien ne s'affiche, la connexion se fait toute seule. Il n'y a donc qu'**une** fenêtre à connaître, et elle n'apparaît que pour un site en règle **Me demander** :
 
 1. **Sésame — demande d'accès.** Qui demande (Cowork, Claude Code…), quel site, et pourquoi. *Refuser* est le bouton par défaut ; clique **Autoriser** pour laisser Sésame remplir le formulaire.
 
-Le Trousseau macOS, lui, ne demande **plus** à chaque connexion depuis la 0.5.0 : Sésame lit le mot de passe via son **assistant Trousseau** signé (`sesame-keychain`, livré dans Sésame.app), et cet assistant est déclaré de confiance dès la création du site (`sesame add` ou la fenêtre Sésame) — la lecture est ensuite silencieuse, sans aucune boîte de dialogue. La seule exception : un site enregistré avant la 0.5.0 (ou avant la 0.3.0). Pour lui, le Trousseau affichera encore sa boîte de dialogue — mais une seule fois, pas à chaque connexion — et la bonne réponse est alors **Toujours autoriser**, parce que le demandeur nommé dans la fenêtre est `sesame-keychain`, l'assistant signé de Sésame, jamais `security`. `sesame doctor` te dit lesquels de tes sites sont encore dans ce cas ; les réenregistrer (`sesame add <site>`) évite même ce premier clic. Détails et garanties : [SECURITY.fr.md](SECURITY.fr.md).
+Le Trousseau macOS, lui, ne demande rien pour les sites enregistrés depuis la 0.5.1 : c'est l'assistant Trousseau signé (`sesame-keychain`, livré dans Sésame.app) qui crée et relit chaque élément lui-même, ce qui le rend silencieux dès le premier accès — aucune boîte de dialogue, jamais de « Toujours autoriser » à cliquer. La seule exception : un site enregistré avant la 0.5.1, dont l'élément appartient encore à l'ancien outil. `sesame doctor` te dit lesquels ; corrige-les d'un coup avec `sesame migrate-keychain` — une fenêtre du Trousseau par site (clique **Autoriser**), une seule fois, puis c'est réglé pour toujours. Détails et garanties : [SECURITY.fr.md](SECURITY.fr.md).
 
 Ensuite, si le site demande un code (SMS, e-mail, application), un bandeau apparaît en haut du Chrome Sésame et Sésame t'attend.
 
@@ -186,7 +186,7 @@ Voir toutes les configurations d'un coup : `sesame install print`.
 - **Captcha** : Sésame ne le résout pas ; il le signale (`hint`) et c'est à toi de le faire dans le Chrome.
 - **Formulaires exotiques** (champs sans `type`, Shadow DOM) : indique les sélecteurs avec `--user-sel / --pass-sel / --submit-sel`. Pour les trouver : clic droit sur le champ → Inspecter.
 - **macOS uniquement** (Trousseau + boîtes de dialogue `osascript`). Node ≥ 20.
-- Depuis la 0.5.0, la lecture du mot de passe passe par l'assistant Trousseau signé (`sesame-keychain`) : la boîte de dialogue du Trousseau apparaît au plus une fois par site, pas à chaque connexion, et **Toujours autoriser** est alors la bonne réponse (le demandeur est l'assistant, pas `security`) — voir SECURITY.fr.md.
+- Depuis la 0.5.1, la lecture du mot de passe passe par l'assistant Trousseau signé (`sesame-keychain`), qui crée lui-même chaque élément : aucune boîte de dialogue du Trousseau pour un site enregistré désormais. Un site enregistré avant la 0.5.1 appartient encore à l'ancien outil ; `sesame doctor` le signale et `sesame migrate-keychain` corrige (une fenêtre du Trousseau, clique **Autoriser**, une fois) — voir SECURITY.fr.md.
 - Un agent qui exécute du JavaScript dans le Chrome Sésame (Claude in Chrome installé dans ce profil) peut observer ce que Sésame tape dans la page. Sésame soumet toujours et vide le champ en cas d'échec, mais ne peut pas cacher le DOM à une extension que tu as installée. Voir SECURITY.fr.md.
 - Par l'extension, si Chrome cesse de répondre après la remise des identifiants, Sésame répond « l'extension n'a pas répondu : vérifie l'onglet » et ne réessaie **pas** dans le Chrome dédié (le formulaire a peut-être déjà été soumis).
 

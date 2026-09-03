@@ -11,7 +11,10 @@ import {
   HOME, SITES_FILE, JOURNAL_FILE, CHROME_PROFILE, CDP_URL, POLICIES,
   loadSites, saveSites, normalizeName, siteDomainFor, assertLoginUrl, ensureHome,
 } from "../src/config.js";
-import { setSecret, deleteSecret, hasSecret, trustedAppsByAccount, trustedHelperInfo, keychainAvailable } from "../src/keychain.js";
+import {
+  setSecret, deleteSecret, hasSecret, trustedAppsByAccount, trustedHelperInfo, keychainAvailable,
+  readSecretViaSecurityTool, sitesNeedingMigration,
+} from "../src/keychain.js";
 import { readJournal, formatEvent, logEvent } from "../src/journal.js";
 import { lock, unlock, isLocked, assertPolicy } from "../src/policy.js";
 
@@ -31,6 +34,10 @@ Usage : sesame <commande> [options]
                           always = automatique, revoked = accès coupé.
   revoke <site>           Raccourci de : policy <site> revoked
   remove <site>           Supprime le site ET son secret du Trousseau.
+  migrate-keychain [--site <site>]
+                          Pour les sites enregistrés avant la 0.5.1 : relit le secret via le Trousseau (une
+                          fenêtre « Autoriser » par site) puis le réécrit via l'assistant Sésame, pour que la
+                          prochaine lecture soit silencieuse. Sans --site : tous les sites à migrer.
   lock | unlock           Verrou global : bloque toute connexion, quel que soit le site.
   log [--site <site>] [-n <N>]
                           Affiche le journal d'accès (défaut : 30 dernières lignes).
@@ -60,6 +67,7 @@ async function main() {
     case "policy": return policy(args[0], args[1]);
     case "revoke": return policy(args[0], "revoked");
     case "remove": case "rm": return remove(args[0]);
+    case "migrate-keychain": return migrateKeychain();
     case "lock": lock(); logEvent({ action: "lock", caller: "cli", result: "ok" }); return console.log("🔒 Sésame verrouillé. Aucune connexion ne sera remplie jusqu'à `sesame unlock`.");
     case "unlock": unlock(); logEvent({ action: "unlock", caller: "cli", result: "ok" }); return console.log("🔓 Sésame déverrouillé.");
     case "log": case "journal": return log();
@@ -185,6 +193,51 @@ function remove(name) {
   const secretGone = keychainAvailable() ? deleteSecret(key) : false;
   logEvent({ site: key, action: "remove_site", caller: "cli", result: "ok", detail: `config ${existed ? "supprimée" : "absente"}, secret ${secretGone ? "supprimé" : "absent"}` });
   console.log(`🗑  « ${key} » : configuration ${existed ? "supprimée" : "absente"}, secret du Trousseau ${secretGone ? "supprimé" : "absent"}.`);
+}
+
+/**
+ * Migre les sites créés avant 0.5.1 (élément Trousseau qui n'appartient pas à l'assistant) : relit chacun
+ * via /usr/bin/security (une fenêtre du Trousseau par site, l'utilisateur clique « Autoriser »), puis
+ * réécrit via l'assistant Sésame (setSecret, silencieux) et vérifie que la relecture par l'assistant marche
+ * (hasSecret). Aucune valeur n'est jamais journalisée, seul ok/échec par site.
+ */
+function migrateKeychain() {
+  if (!keychainAvailable()) throw new Error("Sésame stocke les secrets dans le Trousseau macOS : cette commande ne fonctionne que sur Mac.");
+  const sites = loadSites();
+  const only = opt("--site");
+  let keys = Object.keys(sites);
+  if (only) {
+    const key = normalizeName(only);
+    if (!sites[key]) throw new Error(`Site inconnu : ${key}`);
+    keys = [key];
+  }
+  if (keys.length === 0) return console.log("Aucun site enregistré.");
+  const toMigrate = sitesNeedingMigration(keys);
+  if (toMigrate.length === 0) {
+    console.log(only ? `✅ « ${keys[0]} » est déjà migré : lecture silencieuse par l'assistant, aucune fenêtre du Trousseau.`
+                      : "✅ Tous les sites sont déjà migrés : lecture silencieuse par l'assistant, aucune fenêtre du Trousseau.");
+    return;
+  }
+  console.log(`${toMigrate.length} site(s) à migrer : ${toMigrate.join(", ")}.`);
+  console.log("Une fenêtre du Trousseau va s'ouvrir pour chacun : cliquez « Autoriser ».\n");
+  const results = [];
+  for (const key of toMigrate) {
+    try {
+      const secret = readSecretViaSecurityTool(key);
+      setSecret(key, secret);
+      if (!hasSecret(key)) throw new Error("vérification après écriture échouée (secret absent)");
+      logEvent({ site: key, action: "keychain_migrate", caller: "cli", result: "ok" });
+      console.log(`✅ « ${key} » migré : les prochaines lectures seront silencieuses.`);
+      results.push(true);
+    } catch (e) {
+      logEvent({ site: key, action: "keychain_migrate", caller: "cli", result: "échec", detail: e.message.slice(0, 160) });
+      console.log(`❌ « ${key} » : ${e.message}`);
+      results.push(false);
+    }
+  }
+  const ok = results.filter(Boolean).length;
+  console.log(`\nBilan : ${ok}/${results.length} site(s) migré(s).`);
+  if (ok < results.length) console.log("Relance « sesame migrate-keychain » pour réessayer les échecs (ou --site <nom> pour un seul).");
 }
 
 function log() {
@@ -410,17 +463,16 @@ async function doctor() {
   ok(n > 0, `${n} site(s) enregistré(s)`);
   if (keychainAvailable()) {
     const helper = trustedHelperInfo();
-    if (helper.present) ok(helper.signed, `assistant Trousseau : présent (${helper.path}), ${helper.signed ? "signé" : "NON SIGNÉ — ignoré, relance macos/scripts/make-app.sh"} ; sites de confiance : ${n > 0 ? Object.keys(sites).join(", ") : "aucun"}`);
+    if (helper.present) ok(helper.signed, `assistant Trousseau : présent (${helper.path}), ${helper.signed ? "signé" : "NON SIGNÉ — ignoré, relance macos/scripts/make-app.sh"}`);
     else console.log("ℹ️  assistant Trousseau absent (macos/scripts/make-app.sh) : les lectures passent par /usr/bin/security, chaque site demande une confirmation à chaque connexion.");
     for (const k of Object.keys(sites)) ok(hasSecret(k), `Trousseau : secret présent pour « ${k} »`);
     if (n > 0 && !args.includes("--fast")) {
       process.stdout.write("   (lecture des droits d'accès du Trousseau, peut prendre une minute… --fast pour sauter)\n");
       const trusted = trustedAppsByAccount();
       for (const k of Object.keys(sites)) {
-        if (trusted[k] === "helper") ok(true, `Trousseau : « ${k} » approuvé pour l'assistant Trousseau (lecture silencieuse, aucune boîte de dialogue)`);
-        else if (trusted[k] === true) console.log(`⚠️  « ${k} » : l'élément du Trousseau a une application de confiance (créé avant 0.3, ou « Toujours autoriser » cliqué sur une ancienne invite) → lecture silencieuse possible par tout processus. Réenregistre-le : sesame add ${k}`);
-        else if (trusted[k] === false && helper.present && helper.signed) console.log(`ℹ️  « ${k} » : pas encore approuvé pour l'assistant Trousseau → le Trousseau demandera une fois : cliquez « Toujours autoriser » (le demandeur est l'assistant signé, pas security). Ou réenregistre : sesame add ${k}`);
-        else if (trusted[k] === false) ok(true, `Trousseau : « ${k} » sans application de confiance (chaque lecture te sera demandée)`);
+        if (trusted[k] === "helper") ok(true, `Trousseau : « ${k} » — lecture silencieuse (assistant)`);
+        else if (helper.present && helper.signed) console.log(`⚠️  « ${k} » : créé par l'ancien outil (ou une application externe) → lancez : sesame migrate-keychain --site ${k}`);
+        else ok(true, `Trousseau : « ${k} » sans application de confiance (chaque lecture te sera demandée) — installe l'assistant (macos/scripts/make-app.sh) puis sesame migrate-keychain`);
       }
     }
   }

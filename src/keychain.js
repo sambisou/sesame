@@ -206,3 +206,37 @@ export function hasTrustedApp(siteKey) {
   const r = trustedAppsByAccount()[siteKey];
   return r === undefined ? null : r;
 }
+
+/**
+ * Lit le secret par /usr/bin/security, JAMAIS par l'assistant : c'est le seul moyen de récupérer la valeur
+ * d'un élément créé par l'ancien outil (avant 0.5.1), que l'assistant — même présent — ne peut pas relire
+ * silencieusement puisqu'il ne lui appartient pas. Réservé à `sesame migrate-keychain` : déclenche la boîte
+ * de dialogue du Trousseau (une fois par site, l'utilisateur clique « Autoriser »).
+ */
+export function readSecretViaSecurityTool(siteKey) {
+  assertKey(siteKey);
+  let out;
+  try {
+    out = sec(["find-generic-password", "-s", KEYCHAIN_SERVICE, "-a", siteKey, "-w"]);
+  } catch (e) {
+    if (e.status === 44) throw new Error(`Aucun identifiant dans le Trousseau pour « ${siteKey} »`);
+    throw new Error(`Le Trousseau a refusé la lecture pour « ${siteKey} » (réponds « Autoriser » à sa demande, ou déverrouille-le)`);
+  }
+  try {
+    const obj = JSON.parse(out.trim());
+    if (typeof obj.password !== "string") throw new Error();
+    return { username: obj.username ?? "", password: obj.password };
+  } catch {
+    throw new Error(`Secret du Trousseau illisible pour « ${siteKey} »`);
+  }
+}
+
+/**
+ * Parmi les clés données, celles dont l'élément Trousseau n'appartient pas à l'assistant (donc à migrer).
+ * Un résultat indéterminable (absent du dump, Trousseau illisible) est traité comme « à migrer » : mieux
+ * vaut une invite en trop qu'un site qui reste bloqué en silence sans qu'on sache pourquoi.
+ */
+export function sitesNeedingMigration(siteKeys) {
+  const trusted = trustedAppsByAccount();
+  return siteKeys.filter(k => trusted[k] !== "helper");
+}

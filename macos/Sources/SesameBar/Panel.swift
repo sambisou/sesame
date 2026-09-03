@@ -37,17 +37,11 @@ struct Panel: View {
         }
         .frame(width: 372)
         .background(Color(nsColor: .windowBackgroundColor))
-        .alert(item: $confirmRemove) { s in
-            Alert(title: Text("Supprimer « \(s.id) » ?"),
-                  message: Text("Le site et son mot de passe seront retirés du Trousseau. Claude ne pourra plus s'y connecter."),
-                  primaryButton: .destructive(Text("Supprimer")) { store.removeSite(s.id) },
-                  secondaryButton: .cancel(Text("Annuler")))
-        }
     }
 
     private var listHeight: CGFloat {
-        let rows = CGFloat(store.sites.count) * 58 + CGFloat(min(store.events.count, 8)) * 24 + 40 + 70
-        return min(max(rows, 180), 520)
+        let rows = CGFloat(store.sites.count) * 58 + (confirmRemove == nil ? 0 : 34) + CGFloat(min(store.events.count, 8)) * 24 + 40 + 70
+        return min(max(rows, 180), 560)
     }
 
     // MARK: en-tête
@@ -78,8 +72,19 @@ struct Panel: View {
                 Text(s.domain).font(.system(size: 11)).foregroundStyle(Palette.muted).lineLimit(1)
                 Spacer()
                 Text(relative(s.lastUsed)).font(.system(size: 10.5)).foregroundStyle(Palette.muted)
-                Button { confirmRemove = s } label: { Image(systemName: "trash").font(.system(size: 11)) }
-                    .buttonStyle(.plain).foregroundStyle(Palette.muted).help("Supprimer le site et son mot de passe")
+                Button { withAnimation(.easeOut(duration: 0.12)) { confirmRemove = (confirmRemove?.id == s.id) ? nil : s } } label: { Image(systemName: "trash").font(.system(size: 11)) }
+                    .buttonStyle(.plain).foregroundStyle(confirmRemove?.id == s.id ? Palette.no : Palette.muted).help("Supprimer le site et son mot de passe")
+            }
+            if confirmRemove?.id == s.id {
+                // Confirmation dans le panneau : une alerte système fermerait le menu et ne rendrait jamais la main.
+                HStack(spacing: 8) {
+                    Text("Retirer « \(s.id) » et son mot de passe du Trousseau ?").font(.system(size: 11)).foregroundStyle(Palette.no)
+                    Spacer()
+                    Button("Annuler") { confirmRemove = nil }.controlSize(.mini)
+                    Button("Supprimer") { store.removeSite(s.id); confirmRemove = nil }.controlSize(.mini).tint(Palette.no).buttonStyle(.borderedProminent)
+                }
+                .padding(8)
+                .background(RoundedRectangle(cornerRadius: 6).fill(Palette.no.opacity(0.08)))
             }
             HStack(spacing: 8) {
                 Picker("", selection: Binding(get: { s.policy }, set: { store.setPolicy(s.id, $0) })) {

@@ -18,10 +18,23 @@ bash ./install.sh
 status=$?
 echo
 if [ $status -eq 0 ]; then
+  if [ -d "macos/build/Sésame.app" ]; then
+    echo "Installing the menu bar app / Installation de l'app de la barre des menus…"
+    rm -rf "/Applications/Sésame.app" 2>/dev/null
+    if cp -R "macos/build/Sésame.app" /Applications/ 2>/dev/null; then
+      xattr -dr com.apple.quarantine "/Applications/Sésame.app" 2>/dev/null || true
+      open "/Applications/Sésame.app"
+      read -r -p "Open Sésame at login? / Ouvrir Sésame à la connexion ? [y/N] " yn
+      case "$yn" in [yY]*) osascript -e 'tell application "System Events" to make login item at end with properties {path:"/Applications/Sésame.app", hidden:false}' >/dev/null 2>&1 && echo "  added to Login Items / ajouté aux éléments d'ouverture";; esac
+    else
+      echo "  could not copy to /Applications; the app stays in $(pwd)/macos/build / copie impossible, l'app reste dans le dossier"
+      open "macos/build/Sésame.app"
+    fi
+  fi
+  echo
   echo "Done. Next / Terminé. Ensuite :"
-  echo "  1. sesame chrome"
-  echo "  2. sesame add <site> --url <login-url>"
-  echo "  3. restart Claude Desktop / redémarrez Claude Desktop"
+  echo "  1. look for the seed icon in the menu bar: add sites, open Chrome, lock / cherchez la graine dans la barre des menus"
+  echo "  2. restart Claude Desktop / redémarrez Claude Desktop"
 else
   echo "Installation failed (code $status). See messages above. / Échec (code $status), voir ci-dessus."
 fi

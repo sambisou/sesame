@@ -60,6 +60,18 @@ In that Chrome, the **first time**: install the **Claude in Chrome** extension a
 
 > Tip: to launch it at login, wrap `sesame chrome` in an Automator "Application" and add it under *System Settings → General → Login Items*.
 
+## The menu bar app
+
+`Install Sesame.command` also installs **Sésame.app** in the menu bar (a small seed icon). Everything can be done from there, without a terminal:
+
+- see every registered site and change its rule with one click: **Me demander** (ask), **Automatique**, **Coupé** (revoked);
+- add a site: one window with username, password and an eye button to reveal it; the secret goes straight to the Keychain;
+- delete a site (and its secret), flip the global **lock**, open the Sésame Chrome, read the last journal lines.
+
+When Claude needs a site that is not registered yet, the app opens that same window for you (`sesame_request_site`). If the app is not running, Sésame falls back to macOS dialogs.
+
+Build it yourself: `cd macos && ./scripts/make-app.sh release` (Swift 6, macOS 14+), the bundle lands in `macos/build/Sésame.app`.
+
 ## Register a site
 
 ```bash

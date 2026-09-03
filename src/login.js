@@ -1,5 +1,7 @@
 // Orchestration d'une connexion : politique → validation → Chrome → remplissage → journal.
-import { getSite, loadSites, saveSites, normalizeName, siteDomainFor, assertLoginUrl } from "./config.js";
+import fs from "node:fs";
+import path from "node:path";
+import { HOME, getSite, loadSites, saveSites, normalizeName, siteDomainFor, assertLoginUrl } from "./config.js";
 import { getSecret, hasSecret, setSecret, keychainAvailable } from "./keychain.js";
 import { logEvent } from "./journal.js";
 import { isLocked, askHuman, askText, notify, notifyWaitingCode } from "./policy.js";
@@ -203,6 +205,13 @@ export async function requestSite({ site: siteName, url, reason = "", note, call
     return { ok: true, alreadyRegistered: true, site: key, domain: existing.domain, policy: existing.policy, message: `« ${key} » est déjà enregistré : appelle sesame_login.` };
   }
 
+  // Si l'app Sésame (barre des menus) tourne, c'est elle qui montre le formulaire : identifiant et mot de passe
+  // sur une seule fenêtre, œil pour afficher le mot de passe. Sinon, boîtes de dialogue macOS successives.
+  if (!ui && barAlive()) {
+    const r = await requestViaBar({ key, url, reason, note, caller, domain, existing, sites, base });
+    if (r) return r;
+  }
+
   const confirm = ui?.confirm || (o => askHuman({ okLabel: "Enregistrer", cancelLabel: "Plus tard", defaultOk: true, timeoutSec: 300, ...o }));
   const text = ui?.text || askText;
 
@@ -236,8 +245,9 @@ export async function requestSite({ site: siteName, url, reason = "", note, call
   } finally {
     password = null;
   }
+  // En cas de réenregistrement, on garde le domaine déjà réglé (parfois élargi à la main, ex. edf.fr).
   sites[key] = {
-    domain, loginUrl: url, policy: existing?.policy || "ask",
+    domain: existing?.domain || domain, loginUrl: url, policy: existing?.policy || "ask",
     note: note || existing?.note, selectors: existing?.selectors || {},
     createdAt: existing?.createdAt || new Date().toISOString(), lastUsed: existing?.lastUsed,
   };
@@ -245,6 +255,60 @@ export async function requestSite({ site: siteName, url, reason = "", note, call
   logEvent({ ...base, result: "ok", detail: `${domain}, politique ${sites[key].policy}, saisi par l'utilisateur dans la fenêtre Sésame` });
   notify("Sésame", `« ${key} » enregistré. Claude peut maintenant demander la connexion (avec votre accord à chaque fois).`);
   return { ok: true, site: key, domain, policy: sites[key].policy, message: `« ${key} » enregistré par l'utilisateur. Appelle maintenant sesame_login(site: "${key}").` };
+}
+
+/** L'app Sésame écrit ~/.sesame/bar.alive toutes les 2 s tant qu'elle tourne. */
+function barAlive() {
+  try {
+    const st = fs.statSync(path.join(HOME, "bar.alive"));
+    return Date.now() - st.mtimeMs < 10000;
+  } catch { return false; }
+}
+
+/**
+ * Dépose une demande pour l'app Sésame (~/.sesame/requests/<id>.json) et attend sa réponse
+ * (<id>.done.json : saved | refused). L'app enregistre elle-même le secret dans le Trousseau.
+ * Renvoie null si l'app ne répond pas (on retombe alors sur les boîtes de dialogue).
+ */
+async function requestViaBar({ key, url, reason, note, caller, domain, base, timeoutSec = 300 }) {
+  const dir = path.join(HOME, "requests");
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  const id = `${Date.now()}-${key}`;
+  const file = path.join(dir, id + ".json");
+  const done = path.join(dir, id + ".done.json");
+  fs.writeFileSync(file, JSON.stringify({ id, site: key, url, reason, note, caller, ts: new Date().toISOString() }), { mode: 0o600 });
+  logEvent({ ...base, result: "attente", detail: "formulaire ouvert dans l'app Sésame" });
+  const deadline = Date.now() + timeoutSec * 1000;
+  let status = null;
+  while (Date.now() < deadline) {
+    await new Promise(r => setTimeout(r, 700));
+    if (fs.existsSync(done)) {
+      try { status = JSON.parse(fs.readFileSync(done, "utf8")).status; } catch { status = "refused"; }
+      break;
+    }
+    if (Date.now() - deadline + timeoutSec * 1000 > 8000 && !barAlive()) break; // l'app a disparu : repli
+  }
+  try { fs.unlinkSync(file); } catch {}
+  try { fs.unlinkSync(done); } catch {}
+  if (status === "saved") {
+    // L'app a écrit le Trousseau et sites.json ; on relit pour répondre juste.
+    const site = loadSites()[key];
+    if (site && hasSecret(key)) {
+      logEvent({ ...base, result: "ok", detail: `${site.domain}, politique ${site.policy}, saisi par l'utilisateur dans l'app Sésame` });
+      return { ok: true, site: key, domain: site.domain, policy: site.policy, message: `« ${key} » enregistré par l'utilisateur. Appelle maintenant sesame_login(site: "${key}").` };
+    }
+    logEvent({ ...base, result: "échec", detail: "l'app a répondu « saved » mais le site ou le secret manque" });
+    return { ok: false, message: "L'enregistrement n'a pas abouti (secret absent). Réessaie." };
+  }
+  if (status === "refused") {
+    logEvent({ ...base, result: "refusé", detail: "« Plus tard » dans l'app Sésame" });
+    return { ok: false, refused: true, message: "L'utilisateur n'a pas souhaité enregistrer ce site maintenant." };
+  }
+  if (status === null && Date.now() >= deadline) {
+    logEvent({ ...base, result: "refusé", detail: `sans réponse dans l'app Sésame après ${timeoutSec} s` });
+    return { ok: false, refused: true, message: `L'utilisateur n'a pas répondu dans le délai (${timeoutSec} s).` };
+  }
+  return null; // l'app a disparu : boîtes de dialogue
 }
 
 function touchLastUsed(key) {

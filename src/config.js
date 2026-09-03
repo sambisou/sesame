@@ -64,12 +64,22 @@ export function assertLoginUrl(url) {
   return u;
 }
 
+// Suffixes publics à deux niveaux les plus courants : le domaine « du site » est un cran au-dessus.
+const TWO_LEVEL_SUFFIXES = new Set(["co.uk", "org.uk", "ac.uk", "gov.uk", "com.au", "net.au", "org.au", "co.nz", "co.jp", "com.br", "com.mx", "co.za", "com.ar", "asso.fr", "gouv.fr", "com.tr", "co.in", "com.sg", "com.hk"]);
+
+/**
+ * Le domaine « du site » = domaine enregistrable (particulier.edf.fr → edf.fr, login.infomaniak.com →
+ * infomaniak.com). Les flux de connexion sautent presque toujours d'un sous-domaine à l'autre
+ * (espace-client., login., sso.) : c'est ce périmètre que Sésame accepte, jamais un autre domaine.
+ */
 export function siteDomainFor(url) {
   const h = hostnameOf(url);
   if (!h) return null;
+  if (/^\d+\.\d+\.\d+\.\d+$/.test(h) || h === "localhost") return h;
   const parts = h.split(".");
-  if (parts.length >= 3 && AUTH_LABELS.has(parts[0])) return parts.slice(1).join(".");
-  return h;
+  if (parts.length <= 2) return h;
+  const last2 = parts.slice(-2).join(".");
+  return TWO_LEVEL_SUFFIXES.has(last2) ? parts.slice(-3).join(".") : last2;
 }
 
 /** Le site correspond-il à cette URL d'onglet ? (domaine ou sous-domaine) */

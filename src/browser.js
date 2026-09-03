@@ -136,7 +136,6 @@ export async function hasLoginFields(page, site) {
 
 /** Ramène un onglet du site sur sa page de connexion (session déjà ouverte, tableau de bord, page de déconnexion…). */
 export async function gotoLogin(page, url, site) {
-  await page.bringToFront().catch(() => {});
   // Certains liens de connexion déconnectent d'abord (page « vous êtes déconnecté ») et n'affichent le
   // formulaire qu'au passage suivant : on y retourne jusqu'à trois fois tant qu'aucun champ n'apparaît.
   for (let i = 0; i < 3; i++) {
@@ -290,6 +289,7 @@ export async function waitForSecondFactor(page, site, { timeoutSec = 180, messag
   const banner = message || `Sésame attend que vous saisissiez le code reçu par e-mail, SMS ou application. La connexion reprendra toute seule dès que le site l'aura accepté (encore ${timeoutSec} s).`;
   const elapsed = () => Math.round((Date.now() - started) / 1000);
   let clear = 0;
+  await page.bringToFront().catch(() => {}); // ici, oui : l'utilisateur doit taper le code
   await showBanner(page, banner);
   while (Date.now() < deadline) {
     if (page.isClosed()) return { done: false, elapsedSec: elapsed(), reason: "onglet fermé pendant l'attente du code" };
@@ -329,7 +329,7 @@ export async function fillLogin(page, site, secret, { submitForm = true, waitSec
   const gone = hostname => ({ ok: false, steps, url: publicUrl(page.isClosed() ? "" : page.url()), reason: `onglet parti vers ${hostname || "une autre page"} : remplissage abandonné` });
   const bail = () => gone(page.isClosed() ? "(onglet fermé)" : publicUrl(page.url()));
 
-  await page.bringToFront().catch(() => {});
+  // Pas de passage au premier plan : la connexion se fait en arrière-plan, Chrome ne vient devant que pour un code.
   await page.waitForLoadState("domcontentloaded", { timeout: 10000 }).catch(() => {});
 
   let user = secret.username ? await locate(page, site, site.selectors?.username, USER_SELECTORS) : null;

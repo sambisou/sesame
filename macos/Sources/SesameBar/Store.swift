@@ -262,11 +262,15 @@ final class Store {
 
     static let authLabels: Set<String> = ["login", "auth", "accounts", "account", "sso", "id", "idp", "signin", "sign-in", "connect", "oauth", "secure", "my", "mon", "espace-client", "espaceclient", "identity", "authentification", "authentication", "portal", "compte", "moncompte", "customer", "client", "www"]
 
-    /// Même règle que src/config.js : login.x.com → x.com.
+    static let twoLevelSuffixes: Set<String> = ["co.uk", "org.uk", "ac.uk", "gov.uk", "com.au", "net.au", "org.au", "co.nz", "co.jp", "com.br", "com.mx", "co.za", "com.ar", "asso.fr", "gouv.fr", "com.tr", "co.in", "com.sg", "com.hk"]
+
+    /// Même règle que src/config.js : le domaine enregistrable (particulier.edf.fr → edf.fr, login.infomaniak.com → infomaniak.com).
     static func siteDomain(for host: String) -> String {
-        var parts = host.lowercased().split(separator: ".").map(String.init)
-        if parts.first == "www" { parts.removeFirst() }
-        if parts.count >= 3, let first = parts.first, authLabels.contains(first) { parts.removeFirst() }
-        return parts.joined(separator: ".")
+        let h = host.lowercased()
+        if h == "localhost" || h.range(of: #"^\d+\.\d+\.\d+\.\d+$"#, options: .regularExpression) != nil { return h }
+        let parts = h.split(separator: ".").map(String.init)
+        if parts.count <= 2 { return h }
+        let last2 = parts.suffix(2).joined(separator: ".")
+        return twoLevelSuffixes.contains(last2) ? parts.suffix(3).joined(separator: ".") : last2
     }
 }

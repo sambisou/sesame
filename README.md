@@ -12,7 +12,7 @@ The idea: Claude never asks *"give me your EDF password"*. It asks Sésame *"fil
    Claude (Cowork / Code)            Sésame (local MCP server)              "Sésame" Chrome
  ─────────────────────────         ──────────────────────────────         ────────────────────
  sesame_login("edf",        ──►    site policy? (ask / always / revoked)
-   reason="August invoice")        global lock?
+   reason="August invoice")        global Block?
                                    ├─ ask → macOS dialog ──────────────► you: Allow / Refuse
                                    ├─ macOS Keychain → username + password
                                    ├─ finds the edf.fr tab (or opens it) ──►  types the fields, submits
@@ -89,7 +89,7 @@ A login through the extension happens in two steps: Sésame first asks the exten
 
 - see every registered site and change its rule with one click: **Me demander** (ask), **Automatique**, **Coupé** (revoked);
 - add a site: one window with username, password and an eye button to reveal it; the secret goes straight to the Keychain;
-- delete a site (and its secret), flip the global **lock**, open the Sésame Chrome, read the last journal lines.
+- delete a site (and its secret), flip the global **Block**, open the Sésame Chrome, read the last journal lines.
 
 When Claude needs a site that is not registered yet, the app opens that same window for you (`sesame_request_site`). If the app is not running, Sésame falls back to macOS dialogs.
 
@@ -139,10 +139,13 @@ sesame log --site edf -n 100
 
 Each line of `~/.sesame/journal.jsonl` records: timestamp, site, action (`login`, `2fa`, `open_login`, `policy`, `lock`…), caller (`cowork`, `claude-code`, `cli`, `http`…), result (`authorized`, `refused`, `succeeded`, `failed`, `error` — in French in the file) and a readable detail. Claude can read it through `sesame_journal` to report back to you, but cannot erase it.
 
-## The two windows you will see at every login
+## The window you will see at every login
 
-1. **Sésame — demande d'accès.** Who is asking (Cowork, Claude Code…), which site, and why. *Refuser* is the default; click **Autoriser** to let Sésame fill the form. Nothing happens without this click (unless you set the site to *Automatique*).
-2. **The macOS Keychain dialog**: *"security wants to use your confidential information stored in “Sésame — edf” in your keychain. To allow this, enter the “login” keychain password."* This is macOS itself asking, because Sésame stores its items with **no trusted application**. Type your Mac session password and click **Allow**. **Never click Always Allow**: that would let any program on your Mac read the password silently from then on (`sesame doctor` would then flag the site; re-register it to fix). *Deny* cancels the login.
+Sésame's first principle is to automate: for a site set to **Automatique**, nothing is shown, the login just happens. So there is only **one** window to know about, and it only appears for a site set to **Me demander** (ask):
+
+1. **Sésame — demande d'accès.** Who is asking (Cowork, Claude Code…), which site, and why. *Refuser* is the default; click **Autoriser** to let Sésame fill the form.
+
+The macOS Keychain no longer asks at every login since 0.5.0: Sésame reads the password through its signed **Keychain assistant** (`sesame-keychain`, shipped inside Sésame.app), and that assistant is declared trusted the moment the site is created (`sesame add` or the Sésame window) — every read after that is silent, no dialog at all. The one exception is a site registered before 0.5.0 (or before 0.3.0): for that one, the Keychain will still show its dialog — but only once, not at every login — and the right answer is now **Always Allow**, because the requester named in the dialog is `sesame-keychain`, Sésame's own signed assistant, never `security`. `sesame doctor` tells you which of your sites are still in that state; re-registering them (`sesame add <site>`) skips even that first click. Full details and guarantees: [SECURITY.md](SECURITY.md).
 
 Then, if the site asks for a code (SMS, e-mail, app), a banner appears at the top of the Sésame Chrome and Sésame waits for you.
 
@@ -188,7 +191,7 @@ Print every configuration at once: `sesame install print`.
 - **Captcha**: Sésame does not solve it; it flags it (`hint`) and you do it in Chrome.
 - **Unusual forms** (fields without `type`, Shadow DOM): give the selectors with `--user-sel / --pass-sel / --submit-sel / --code-sel`. To find them: right-click the field → Inspect.
 - **macOS only** (Keychain + `osascript` dialogs). Node 20 or later.
-- Each login triggers the macOS Keychain dialog before the password is read: answer **Allow**. Never click **Always Allow** (it would let any local process read the item silently, see SECURITY.md).
+- Since 0.5.0, the password read goes through the signed Keychain assistant (`sesame-keychain`): the Keychain dialog appears at most once per site, not at every login, and **Always Allow** is then the right answer there (the requester is the assistant, not `security`) — see SECURITY.md.
 - An agent running JavaScript in the Sésame Chrome (Claude in Chrome installed there) can observe what Sésame types into the page. Sésame always submits and clears the field on failure, but cannot hide the DOM from an extension you installed. See SECURITY.md.
 - Through the extension, if Chrome stops answering after the credentials were handed over, Sésame reports "the extension did not respond: check the tab" and does **not** retry in the dedicated Chrome (the form may already have been submitted).
 
@@ -201,13 +204,13 @@ sesame doctor
 - *"Cannot reach Chrome on http://127.0.0.1:9222"* → `sesame chrome` (the regular Chrome is not enough).
 - *"No username/password field visible"* → open the login page (Claude can call `sesame_open_login`) or set `--url`.
 - Claude does not see the tools → restart Claude Desktop; in Claude Code, `claude mcp list` must show `sesame`.
-- Files: `~/.sesame/sites.json` (config), `~/.sesame/journal.jsonl` (journal), `~/.sesame/LOCKED` (lock), `~/.sesame/chrome-profile/`, `~/.sesame/http-token` (HTTP token).
+- Files: `~/.sesame/sites.json` (config), `~/.sesame/journal.jsonl` (journal), `~/.sesame/LOCKED` (Block), `~/.sesame/chrome-profile/`, `~/.sesame/http-token` (HTTP token).
 
 ## Security — summary
 
 - Secrets: macOS Keychain only, encrypted by the system, bound to your session.
 - Claude: no API returns a secret; errors are sanitized.
-- Control: per-site policy, dialog approval (default), revocation, global lock.
+- Control: per-site policy, dialog approval (default), revocation, global Block.
 - Traceability: append-only journal, readable by you and by Claude.
 - Scope: everything runs locally on the Mac; no outbound network except Chrome itself.
 

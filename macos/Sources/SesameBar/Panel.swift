@@ -58,13 +58,13 @@ struct Panel: View {
             Image(nsImage: SeedIcon.appIcon(size: 44)).resizable().frame(width: 22, height: 22)
             VStack(alignment: .leading, spacing: 1) {
                 Text("Sésame").font(.system(size: 14, weight: .semibold))
-                Text(store.locked ? "Verrou actif : aucune connexion possible" : "Claude se connecte, vous validez, le mot de passe reste ici")
+                Text(store.locked ? "Tout est bloqué : aucune connexion possible" : "Claude se connecte tout seul, le mot de passe reste ici")
                     .font(.system(size: 10.5)).foregroundStyle(store.locked ? Palette.no : Palette.muted)
             }
             Spacer()
-            Toggle(isOn: Binding(get: { store.locked }, set: { _ in store.toggleLock() })) { Text("Verrou").font(.system(size: 11)) }
+            Toggle(isOn: Binding(get: { store.locked }, set: { _ in store.toggleLock() })) { Text("Bloquer").font(.system(size: 11)) }
                 .toggleStyle(.switch).controlSize(.mini).tint(Palette.no)
-                .help("Coupe-circuit : bloque toutes les connexions, quel que soit le site.")
+                .help("Coupe-circuit : bloque toutes les connexions, quel que soit le site, jusqu'à ce que vous le relâchiez.")
         }
         .padding(.horizontal, 14).padding(.vertical, 10)
     }
@@ -95,8 +95,8 @@ struct Panel: View {
             }
             HStack(spacing: 8) {
                 Picker("", selection: Binding(get: { s.policy }, set: { store.setPolicy(s.id, $0) })) {
-                    Text("Me demander").tag("ask")
                     Text("Automatique").tag("always")
+                    Text("Me demander").tag("ask")
                     Text("Coupé").tag("revoked")
                 }
                 .pickerStyle(.segmented).controlSize(.small).labelsHidden().frame(width: 250)
@@ -173,8 +173,8 @@ struct Panel: View {
         case "add_site", "update_site": return "site enregistré"
         case "remove_site": return "site supprimé"
         case "policy": return "règle : \(e.detail ?? "")"
-        case "lock": return "verrou activé"
-        case "unlock": return "verrou levé"
+        case "lock": return "tout bloqué"
+        case "unlock": return "blocage levé"
         case "chrome_start": return "Chrome Sésame lancé"
         case "open_login": return "page ouverte"
         case "server_start": return "serveur démarré"

@@ -12,7 +12,7 @@ Le principe : Claude ne demande pas *« donne-moi le mot de passe EDF »*, il de
    Claude (Cowork / Code)            Sésame (serveur MCP local)             Chrome « Sésame »
  ─────────────────────────         ──────────────────────────────         ────────────────────
  sesame_login("edf",        ──►    politique du site ? (ask/always/revoked)
-   reason="facture août")          verrou global ?
+   reason="facture août")          Bloquer global ?
                                    ├─ ask → boîte de dialogue macOS ──► toi : Autoriser / Refuser
                                    ├─ Trousseau macOS → identifiant + mot de passe
                                    ├─ trouve l'onglet edf.fr (ou l'ouvre)   ──►  tape les champs, soumet
@@ -85,7 +85,7 @@ Une connexion par l'extension se fait en deux temps : Sésame demande d'abord à
 
 - voir chaque site enregistré et changer sa règle d'un clic : **Me demander**, **Automatique**, **Coupé** ;
 - ajouter un site : une seule fenêtre avec identifiant, mot de passe et un œil pour l'afficher ; le secret part directement dans le Trousseau ;
-- supprimer un site (et son secret), activer le **verrou** global, ouvrir le Chrome Sésame, lire les dernières lignes du journal.
+- supprimer un site (et son secret), activer le **Bloquer** global, ouvrir le Chrome Sésame, lire les dernières lignes du journal.
 
 Quand Claude a besoin d'un site pas encore enregistré, l'app ouvre cette même fenêtre pour toi (`sesame_request_site`). Si l'app ne tourne pas, Sésame retombe sur les boîtes de dialogue macOS.
 
@@ -134,10 +134,13 @@ sesame log --site edf -n 100
 
 Chaque ligne de `~/.sesame/journal.jsonl` : horodatage, site, action (`login`, `open_login`, `policy`, `lock`…), appelant (`cowork`, `claude-code`, `cli`), résultat (`autorisé`, `refusé`, `réussi`, `échec`, `erreur`) et un détail lisible. Claude peut le lire via `sesame_journal` pour te rendre compte, mais pas l'effacer.
 
-## Les deux fenêtres que tu verras à chaque connexion
+## La fenêtre que tu verras à chaque connexion
 
-1. **Sésame — demande d'accès.** Qui demande (Cowork, Claude Code…), quel site, et pourquoi. *Refuser* est le bouton par défaut ; clique **Autoriser** pour laisser Sésame remplir le formulaire. Rien ne se passe sans ce clic (sauf si tu as mis le site en *Automatique*).
-2. **La fenêtre du Trousseau macOS** : *« security wants to use your confidential information stored in “Sésame — edf” in your keychain. To allow this, enter the “login” keychain password. »* C'est macOS lui-même qui demande, parce que Sésame range ses éléments **sans application de confiance**. Tape le mot de passe de ta session Mac et clique **Allow** (Autoriser). **Ne clique jamais Always Allow** (Toujours autoriser) : n'importe quel programme de ton Mac pourrait ensuite lire le mot de passe en silence (`sesame doctor` signalerait le site ; réenregistre-le pour corriger). *Deny* annule la connexion.
+Le principe premier de Sésame est d'automatiser : pour un site en règle **Automatique**, rien ne s'affiche, la connexion se fait toute seule. Il n'y a donc qu'**une** fenêtre à connaître, et elle n'apparaît que pour un site en règle **Me demander** :
+
+1. **Sésame — demande d'accès.** Qui demande (Cowork, Claude Code…), quel site, et pourquoi. *Refuser* est le bouton par défaut ; clique **Autoriser** pour laisser Sésame remplir le formulaire.
+
+Le Trousseau macOS, lui, ne demande **plus** à chaque connexion depuis la 0.5.0 : Sésame lit le mot de passe via son **assistant Trousseau** signé (`sesame-keychain`, livré dans Sésame.app), et cet assistant est déclaré de confiance dès la création du site (`sesame add` ou la fenêtre Sésame) — la lecture est ensuite silencieuse, sans aucune boîte de dialogue. La seule exception : un site enregistré avant la 0.5.0 (ou avant la 0.3.0). Pour lui, le Trousseau affichera encore sa boîte de dialogue — mais une seule fois, pas à chaque connexion — et la bonne réponse est alors **Toujours autoriser**, parce que le demandeur nommé dans la fenêtre est `sesame-keychain`, l'assistant signé de Sésame, jamais `security`. `sesame doctor` te dit lesquels de tes sites sont encore dans ce cas ; les réenregistrer (`sesame add <site>`) évite même ce premier clic. Détails et garanties : [SECURITY.fr.md](SECURITY.fr.md).
 
 Ensuite, si le site demande un code (SMS, e-mail, application), un bandeau apparaît en haut du Chrome Sésame et Sésame t'attend.
 
@@ -183,7 +186,7 @@ Voir toutes les configurations d'un coup : `sesame install print`.
 - **Captcha** : Sésame ne le résout pas ; il le signale (`hint`) et c'est à toi de le faire dans le Chrome.
 - **Formulaires exotiques** (champs sans `type`, Shadow DOM) : indique les sélecteurs avec `--user-sel / --pass-sel / --submit-sel`. Pour les trouver : clic droit sur le champ → Inspecter.
 - **macOS uniquement** (Trousseau + boîtes de dialogue `osascript`). Node ≥ 20.
-- Chaque connexion déclenche la boîte de dialogue du Trousseau macOS avant la lecture du mot de passe : réponds **Autoriser**. Ne clique jamais **Toujours autoriser** (tout processus local pourrait alors lire l'élément en silence, voir SECURITY.fr.md).
+- Depuis la 0.5.0, la lecture du mot de passe passe par l'assistant Trousseau signé (`sesame-keychain`) : la boîte de dialogue du Trousseau apparaît au plus une fois par site, pas à chaque connexion, et **Toujours autoriser** est alors la bonne réponse (le demandeur est l'assistant, pas `security`) — voir SECURITY.fr.md.
 - Un agent qui exécute du JavaScript dans le Chrome Sésame (Claude in Chrome installé dans ce profil) peut observer ce que Sésame tape dans la page. Sésame soumet toujours et vide le champ en cas d'échec, mais ne peut pas cacher le DOM à une extension que tu as installée. Voir SECURITY.fr.md.
 - Par l'extension, si Chrome cesse de répondre après la remise des identifiants, Sésame répond « l'extension n'a pas répondu : vérifie l'onglet » et ne réessaie **pas** dans le Chrome dédié (le formulaire a peut-être déjà été soumis).
 
@@ -196,12 +199,12 @@ sesame doctor
 - *« Impossible de joindre Chrome sur http://127.0.0.1:9222 »* → `sesame chrome` (le Chrome ordinaire ne suffit pas).
 - *« Aucun champ identifiant/mot de passe visible »* → ouvre la page de connexion (Claude peut appeler `sesame_open_login`) ou précise `--url`.
 - Claude ne voit pas les outils → redémarre Claude Desktop ; dans Claude Code, `claude mcp list` doit afficher `sesame`.
-- Fichiers : `~/.sesame/sites.json` (config), `~/.sesame/journal.jsonl` (journal), `~/.sesame/LOCKED` (verrou), `~/.sesame/chrome-profile/`.
+- Fichiers : `~/.sesame/sites.json` (config), `~/.sesame/journal.jsonl` (journal), `~/.sesame/LOCKED` (Bloquer), `~/.sesame/chrome-profile/`.
 
 ## Sécurité — résumé
 
 - Secrets : Trousseau macOS uniquement, chiffré par le système, lié à ta session.
 - Claude : aucune API ne renvoie un secret ; les erreurs sont assainies.
-- Contrôle : politique par site, validation par dialogue (défaut), révocation, verrou global.
+- Contrôle : politique par site, validation par dialogue (défaut), révocation, Bloquer global.
 - Traçabilité : journal append-only, lisible par toi et par Claude.
 - Périmètre : tout tourne en local sur le Mac ; aucun réseau sortant sauf Chrome lui-même.

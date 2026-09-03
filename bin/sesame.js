@@ -11,7 +11,7 @@ import {
   HOME, SITES_FILE, JOURNAL_FILE, CHROME_PROFILE, CDP_URL, POLICIES,
   loadSites, saveSites, normalizeName, siteDomainFor, assertLoginUrl, ensureHome,
 } from "../src/config.js";
-import { setSecret, deleteSecret, hasSecret, trustedAppsByAccount, keychainAvailable } from "../src/keychain.js";
+import { setSecret, deleteSecret, hasSecret, trustedAppsByAccount, trustedHelperInfo, keychainAvailable } from "../src/keychain.js";
 import { readJournal, formatEvent, logEvent } from "../src/journal.js";
 import { lock, unlock, isLocked, assertPolicy } from "../src/policy.js";
 
@@ -409,12 +409,17 @@ async function doctor() {
   const n = Object.keys(sites).length;
   ok(n > 0, `${n} site(s) enregistré(s)`);
   if (keychainAvailable()) {
+    const helper = trustedHelperInfo();
+    if (helper.present) ok(helper.signed, `assistant Trousseau : présent (${helper.path}), ${helper.signed ? "signé" : "NON SIGNÉ — ignoré, relance macos/scripts/make-app.sh"} ; sites de confiance : ${n > 0 ? Object.keys(sites).join(", ") : "aucun"}`);
+    else console.log("ℹ️  assistant Trousseau absent (macos/scripts/make-app.sh) : les lectures passent par /usr/bin/security, chaque site demande une confirmation à chaque connexion.");
     for (const k of Object.keys(sites)) ok(hasSecret(k), `Trousseau : secret présent pour « ${k} »`);
     if (n > 0 && !args.includes("--fast")) {
       process.stdout.write("   (lecture des droits d'accès du Trousseau, peut prendre une minute… --fast pour sauter)\n");
       const trusted = trustedAppsByAccount();
       for (const k of Object.keys(sites)) {
-        if (trusted[k] === true) console.log(`⚠️  « ${k} » : l'élément du Trousseau a une application de confiance (créé avant 0.3, ou « Toujours autoriser » cliqué) → lecture silencieuse possible par tout processus. Réenregistre-le : sesame add ${k}`);
+        if (trusted[k] === "helper") ok(true, `Trousseau : « ${k} » approuvé pour l'assistant Trousseau (lecture silencieuse, aucune boîte de dialogue)`);
+        else if (trusted[k] === true) console.log(`⚠️  « ${k} » : l'élément du Trousseau a une application de confiance (créé avant 0.3, ou « Toujours autoriser » cliqué sur une ancienne invite) → lecture silencieuse possible par tout processus. Réenregistre-le : sesame add ${k}`);
+        else if (trusted[k] === false && helper.present && helper.signed) console.log(`ℹ️  « ${k} » : pas encore approuvé pour l'assistant Trousseau → le Trousseau demandera une fois : cliquez « Toujours autoriser » (le demandeur est l'assistant signé, pas security). Ou réenregistre : sesame add ${k}`);
         else if (trusted[k] === false) ok(true, `Trousseau : « ${k} » sans application de confiance (chaque lecture te sera demandée)`);
       }
     }

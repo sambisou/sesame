@@ -1,6 +1,6 @@
 <title>Sésame</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,300..800&family=Instrument+Sans:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Manrope:wght@600;700&family=Instrument+Sans:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400;500&display=swap">
 <style>
   :root {
     --bg: #FBFAF7;
@@ -70,7 +70,7 @@
     -webkit-font-smoothing: antialiased;
   }
   h1, h2, h3, .display {
-    font-family: "Bricolage Grotesque", "Helvetica Neue", Arial, sans-serif;
+    font-family: "Manrope", "Helvetica Neue", Arial, sans-serif;
     font-weight: 600;
     letter-spacing: -0.02em;
     line-height: 1.05;
@@ -100,7 +100,7 @@
   }
   .brand { display: flex; align-items: center; gap: 10px; text-decoration: none; }
   .brand svg { width: 30px; height: 30px; }
-  .brand span { font-family: "Bricolage Grotesque", sans-serif; font-weight: 700; font-size: 1.25rem; letter-spacing: -0.02em; }
+  .brand span { font-family: "Manrope", sans-serif; font-weight: 700; font-size: 1.25rem; letter-spacing: -0.02em; }
   nav ul { display: flex; gap: 28px; list-style: none; margin: 0; padding: 0; font-size: .95rem; font-weight: 500; color: var(--ink-2); }
   nav ul a { text-decoration: none; }
   nav ul a:hover { color: var(--ink); }
@@ -202,7 +202,7 @@
   .panel h3 { display: flex; align-items: center; gap: 10px; margin-bottom: 18px; }
   .panel h3 svg { width: 22px; height: 22px; }
   .panel ul { list-style: none; padding: 0; margin: 0; display: grid; gap: 12px; }
-  .panel li { display: flex; gap: 12px; align-items: baseline; color: var(--ink-2); }
+  .panel li { display: flex; gap: 12px; align-items: baseline; color: var(--ink-2); min-width: 0; }
   .panel li code { background: var(--bg-2); padding: 2px 8px; border-radius: 6px; color: var(--ink); }
   .panel.no li code { background: rgba(255,255,255,.55); }
   :root[data-theme="dark"] .panel.no li code { background: rgba(0,0,0,.35); }
@@ -215,7 +215,7 @@
   .steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px; margin-top: 48px; }
   @media (max-width: 800px) { .steps { grid-template-columns: 1fr; } }
   .step { border-top: 2px solid var(--ink); padding-top: 22px; }
-  .step .n { font-family: "Bricolage Grotesque", sans-serif; font-weight: 700; font-size: 2.4rem; color: var(--seed); line-height: 1; margin-bottom: 12px; }
+  .step .n { font-family: "Manrope", sans-serif; font-weight: 700; font-size: 2.4rem; color: var(--seed); line-height: 1; margin-bottom: 12px; }
   .step h3 { margin-bottom: 10px; }
   .step p { color: var(--ink-2); }
   .step .say { margin-top: 16px; padding: 12px 16px; border-radius: 12px; background: var(--bg-2); font-style: italic; color: var(--ink); }
@@ -303,9 +303,13 @@
       <stop offset="1" stop-color="#B57A18"/>
     </linearGradient>
     <symbol id="mark" viewBox="0 0 64 64">
+      <mask id="markHole" maskUnits="userSpaceOnUse" x="0" y="0" width="64" height="64">
+        <circle cx="32" cy="31" r="7" fill="#FFF"/>
+        <path d="M29.4 36 h5.2 l2.4 12 h-10 Z" fill="#FFF"/>
+      </mask>
       <path d="M32 3 C46 14 54 27 54 41 C54 54 44 61 32 61 C20 61 10 54 10 41 C10 27 18 14 32 3 Z" fill="url(#seedGrad)"/>
       <path d="M22 30 C23.5 25 26 19 30 14" fill="none" stroke="#FFF" stroke-opacity=".35" stroke-width="2" stroke-linecap="round"/>
-      <path fill-rule="evenodd" d="M32 24 a7 7 0 1 1 0 14 a7 7 0 1 1 0 -14 Z M29.4 36 h5.2 l2.4 12 h-10 Z" fill="#1A1714"/>
+      <rect x="0" y="0" width="64" height="64" fill="#1A1714" mask="url(#markHole)"/>
     </symbol>
   </defs>
 </svg>
@@ -329,7 +333,7 @@
     <div>
       <svg class="mark" aria-hidden="true"><use href="#mark"/></svg>
       <h1>Vos mots de passe restent chez vous. <em>Claude fait le reste.</em></h1>
-      <p class="lede">Sésame ouvre vos comptes à la place de Claude, sans jamais lui montrer un identifiant. Vous validez chaque accès. Tout reste sur votre Mac, dans le Trousseau d'Apple.</p>
+      <p class="lede">Sésame ouvre vos comptes à la place de Claude, automatiquement, sans jamais lui montrer un identifiant. Pour les sites sensibles, vous validez d'un clic. Tout reste sur votre Mac, dans le Trousseau d'Apple.</p>
       <div class="hero-cta">
         <a class="btn btn-primary" href="https://github.com/sambisou/sesame/releases/latest/download/sesame-macos.zip" rel="noopener">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>
@@ -360,20 +364,14 @@
         </div>
         <div class="illus" data-illus="1">
           <div class="illus-col">
+            <div style="text-align:center"><span class="illus-ok">✓ Automatique : rien à faire</span></div>
+            <div class="illus-then">sauf sur un site réglé sur « Me demander »</div>
             <div class="mini-dialog">
               <svg aria-hidden="true"><use href="#mark"/></svg>
               <div>
                 <b>Sésame — demande d'accès</b>
                 <p><strong>Claude</strong> veut se connecter sur <strong>edf</strong>.</p>
                 <div class="mini-acts"><span class="mini-btn">Refuser</span><span class="mini-btn solid">Autoriser</span></div>
-              </div>
-            </div>
-            <div class="illus-then">puis, le Trousseau d'Apple</div>
-            <div class="mini-dialog small">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>
-              <div>
-                <b>Trousseau</b>
-                <p>votre mot de passe de session</p>
               </div>
             </div>
           </div>
@@ -399,7 +397,7 @@
         <button type="button" class="stepper-btn" id="stepPrev">← Précédent</button>
         <div class="stepper-dots" role="tablist" aria-label="Aller à l'étape">
           <button type="button" class="stepper-dot" role="tab" data-step="0" aria-current="true" aria-label="Étape 1 · Claude demande"></button>
-          <button type="button" class="stepper-dot" role="tab" data-step="1" aria-current="false" aria-label="Étape 2 · Vous autorisez"></button>
+          <button type="button" class="stepper-dot" role="tab" data-step="1" aria-current="false" aria-label="Étape 2 · Automatique, ou vous validez"></button>
           <button type="button" class="stepper-dot" role="tab" data-step="2" aria-current="false" aria-label="Étape 3 · Sésame remplit"></button>
           <button type="button" class="stepper-dot" role="tab" data-step="3" aria-current="false" aria-label="Étape 4 · Claude continue"></button>
         </div>
@@ -413,7 +411,7 @@
   <div class="wrap">
     <p class="eyebrow">Le principe</p>
     <h2>Claude ne reçoit jamais votre mot de passe. Il n'a même pas de commande pour le demander.</h2>
-    <p class="lede" style="margin-top:20px">Sésame n'a aucune commande qui renvoie un secret. Claude obtient trois réponses possibles, et rien d'autre. Le mot de passe est tapé dans la page par Sésame, puis envoyé au site.</p>
+    <p class="lede" style="margin-top:20px">Automatique par défaut : Sésame se connecte pour Claude sans que vous ayez à cliquer, sauf sur les sites que vous réglez sur « Me demander ». Dans tous les cas, aucune commande ne renvoie un secret : Claude obtient trois réponses possibles, et rien d'autre. Le mot de passe est tapé dans la page par Sésame, jamais montré.</p>
     <div class="split">
       <div class="panel">
         <h3><svg viewBox="0 0 24 24" fill="none" stroke="var(--ok)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>Ce que Claude reçoit</h3>
@@ -452,12 +450,12 @@
       <div class="step">
         <div class="n">2</div>
         <h3>Ajoutez un site</h3>
-        <p>Cliquez sur la graine, « Ajouter un site », tapez votre identifiant et votre mot de passe une seule fois. Ils partent dans le Trousseau d'Apple, chiffrés. Sésame n'en garde pas de copie.</p>
+        <p>Cliquez sur la graine, « Ajouter un site », tapez votre identifiant et votre mot de passe une seule fois. Ils partent dans le Trousseau d'Apple, chiffrés. Choisissez sa règle : Automatique pour ne plus rien valider, ou Me demander pour les sites sensibles.</p>
       </div>
       <div class="step">
         <div class="n">3</div>
         <h3>Demandez à Claude</h3>
-        <p>Une fenêtre vous demande votre accord. Vous autorisez, Sésame remplit le formulaire dans votre navigateur, Claude continue son travail.</p>
+        <p>En Automatique, Sésame remplit le formulaire tout seul dans votre navigateur : rien à valider. Sur un site « Me demander », une fenêtre vous demande votre accord d'abord. Claude continue son travail.</p>
         <div class="say">« Connecte-toi sur EDF et récupère la facture d'août. »</div>
       </div>
     </div>
@@ -471,8 +469,8 @@
     <p class="lede" style="margin-top:20px">Des captures de Sésame tel qu'il est, pas des maquettes. Trois fenêtres au quotidien, une graine dans la barre des menus.</p>
     <div class="shots">
       <figure class="shot">
-        <img src="img/panneau.png" alt="Le panneau Sésame dans la barre des menus : liste des sites avec leur règle, journal, verrou" loading="lazy">
-        <figcaption><b>1 · La graine dans la barre des menus.</b> Vos sites, la règle de chacun (me demander, automatique, coupé), le journal des accès, l'interrupteur « Verrou » qui bloque tout, et le bouton pour ajouter un site.</figcaption>
+        <img src="img/panneau.png" alt="Le panneau Sésame dans la barre des menus : liste des sites avec leur règle, journal, bouton Bloquer" loading="lazy">
+        <figcaption><b>1 · La graine dans la barre des menus.</b> Vos sites, la règle de chacun (automatique, me demander, coupé), le journal des accès, le bouton « Bloquer » qui coupe tout, et le bouton pour ajouter un site.</figcaption>
       </figure>
       <figure class="shot">
         <img src="img/fenetre-identifiants.png" alt="La fenêtre Sésame qui demande identifiant et mot de passe pour un site, avec l'œil pour afficher le mot de passe" loading="lazy">
@@ -480,7 +478,7 @@
       </figure>
       <figure class="shot">
         <img src="img/dialogue-acces.png" alt="La demande d'accès Sésame : qui demande, quel site, pourquoi, boutons Refuser et Autoriser" loading="lazy">
-        <figcaption><b>3 · La demande d'accès, à chaque connexion.</b> Qui demande, quel site, pourquoi. « Refuser » est le bouton par défaut. Juste après, le Trousseau d'Apple affiche sa propre fenêtre et demande le mot de passe de votre session : tapez-le et cliquez « Autoriser », jamais « Toujours autoriser ».</figcaption>
+        <figcaption><b>3 · La demande d'accès, sur un site « Me demander ».</b> Qui demande, quel site, pourquoi. « Refuser » est le bouton par défaut. La première fois seulement, le Trousseau d'Apple demande votre accord pour l'assistant Sésame : cliquez « Toujours autoriser ». Ensuite, cette fenêtre ne revient plus.</figcaption>
       </figure>
       <figure class="shot">
         <img src="img/bandeau-code.png" alt="Le bandeau Sésame en haut de la page qui attend la saisie du code reçu par e-mail ou SMS" loading="lazy">
@@ -505,13 +503,14 @@
           <li>Rien d'autre n'y est installé : aucune extension tierce ne peut y observer ce que Sésame tape.</li>
         </ul>
       </div>
-      <div class="panel no" style="background:var(--seed-soft)">
-        <h3>Bientôt : l'extension, dans votre Chrome habituel</h3>
-        <ul style="--dot:var(--seed)">
-          <li>Une extension Sésame remplit le formulaire directement dans votre Chrome de tous les jours. Plus de fenêtre à part.</li>
-          <li>Elle reçoit les identifiants par le canal de messagerie native de Chrome, un tuyau local entre l'extension et Sésame. Rien ne passe par le réseau, l'extension ne stocke rien.</li>
-          <li>La graine de la barre des menus détecte si l'extension est en place et vous guide en trois clics si elle manque. Sésame la choisit quand elle répond, sinon le Chrome à part.</li>
-          <li>À savoir : dans votre Chrome habituel, une autre extension ayant accès à la page pourrait observer la frappe, comme elle pourrait vous observer vous-même. À vous de choisir.</li>
+      <div class="panel">
+        <h3>Disponible : l'extension, dans votre Chrome habituel</h3>
+        <ul>
+          <li>L'extension Sésame (bêta) remplit le formulaire directement dans votre Chrome de tous les jours. Plus de fenêtre à part.</li>
+          <li><span>Installation depuis la graine : menu Sésame → « Navigateur » → « Installer… ». Sésame ouvre <code>chrome://extensions</code> et active le mode développeur pour vous.</span></li>
+          <li><span>Chargez le dossier <code>extension/</code>, copiez l'ID affiché sous son nom, collez-le dans Sésame et cliquez « Relier ».</span></li>
+          <li>Elle reçoit les identifiants par le canal de messagerie native de Chrome, un tuyau local entre l'extension et Sésame. Rien ne passe par le réseau, l'extension ne stocke rien. Sésame la choisit dès qu'elle répond, sinon le Chrome à part.</li>
+          <li>Limite honnête : dans votre Chrome habituel, une autre extension ayant accès à la page pourrait observer la frappe, comme elle pourrait vous observer vous-même. Le Chrome dédié n'a pas cette exposition. À vous de choisir.</li>
         </ul>
       </div>
     </div>
@@ -522,6 +521,7 @@
   <div class="wrap">
     <p class="eyebrow">Sécurité</p>
     <h2>Construit comme Apple le ferait : local, chiffré, sous votre contrôle.</h2>
+    <p class="lede" style="margin-top:20px">Vous choisissez : automatique, ou validation à chaque fois pour les sites sensibles. Et un bouton Bloquer qui coupe tout, à tout moment.</p>
     <div class="sec-grid" style="margin-top:48px">
       <ul class="sec-list">
         <li>
@@ -534,7 +534,7 @@
         </li>
         <li>
           <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z"/><path d="M5 21a7 7 0 0 1 14 0"/></svg></div>
-          <div><b>Vous validez chaque accès, deux fois</b><p>Chaque connexion vous est demandée par une fenêtre Sésame, avec qui demande et pourquoi. Puis le Trousseau d'Apple demande lui aussi votre accord avant de livrer le mot de passe : aucun programme, pas même Sésame, ne le lit en silence.</p></div>
+          <div><b>Vous choisissez, site par site</b><p>Automatique : Claude se connecte sans rien vous demander. Me demander : chaque connexion passe par une fenêtre Sésame qui dit qui, quel site, pourquoi. Vous changez d'avis en un clic, site par site.</p></div>
         </li>
         <li>
           <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4h14v16H5z"/><path d="M9 9h6M9 13h6M9 17h3"/></svg></div>
@@ -542,7 +542,7 @@
         </li>
         <li>
           <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg></div>
-          <div><b>Un coupe-circuit</b><p>Un interrupteur dans la barre de menus bloque toutes les connexions d'un coup, quel que soit le site, le temps que vous le souhaitez.</p></div>
+          <div><b>Un bouton Bloquer</b><p>Dans la barre de menus, il coupe toutes les connexions d'un coup, quel que soit le site, le temps que vous le souhaitez.</p></div>
         </li>
       </ul>
       <aside class="vault">
@@ -570,7 +570,7 @@
       <span class="chip"><span class="dot"></span>Claude Desktop et Cowork</span>
       <span class="chip"><span class="dot"></span>Claude Code</span>
       <span class="chip"><span class="dot"></span>Claude dans Chrome</span>
-      <span class="chip soon"><span class="dot"></span>Extension Chrome à venir : votre Chrome habituel, sans fenêtre à part</span>
+      <span class="chip"><span class="dot"></span>Extension Chrome (bêta) : votre Chrome habituel, sans fenêtre à part</span>
       <span class="chip soon"><span class="dot"></span>Cursor, VS Code, Windsurf · compatible, non testé</span>
       <span class="chip soon"><span class="dot"></span>Codex CLI, Gemini CLI · compatible, non testé</span>
       <span class="chip soon"><span class="dot"></span>ChatGPT · via connecteur distant, non testé</span>
@@ -589,8 +589,8 @@
         <table>
           <thead><tr><th>Site</th><th>Règle</th><th>Dernier accès</th></tr></thead>
           <tbody>
-            <tr><td><b>EDF</b><br><small class="mono" style="color:var(--ink-3)">particulier.edf.fr</small></td><td><span class="pol ask">me demander</span></td><td>aujourd'hui, 09:28</td></tr>
             <tr><td><b>OVH</b><br><small class="mono" style="color:var(--ink-3)">ovh.com</small></td><td><span class="pol always">automatique</span></td><td>hier, 18:02</td></tr>
+            <tr><td><b>EDF</b><br><small class="mono" style="color:var(--ink-3)">particulier.edf.fr</small></td><td><span class="pol ask">me demander</span></td><td>aujourd'hui, 09:28</td></tr>
             <tr><td><b>Impôts</b><br><small class="mono" style="color:var(--ink-3)">impots.gouv.fr</small></td><td><span class="pol revoked">accès coupé</span></td><td>il y a 12 jours</td></tr>
           </tbody>
         </table>
@@ -624,11 +624,15 @@
       </details>
       <details>
         <summary>Pourquoi une deuxième fenêtre Chrome ?</summary>
-        <p>Chrome refuse depuis sa version 136 qu'un programme pilote votre profil habituel. Sésame utilise donc un Chrome à profil séparé, qu'il lance lui-même, réduit, et qu'il ne déplie que pour un code. L'extension Chrome, en préparation, supprimera cette fenêtre en travaillant dans votre Chrome de tous les jours.</p>
+        <p>Chrome refuse depuis sa version 136 qu'un programme pilote votre profil habituel. Sésame utilise donc, par défaut, un Chrome à profil séparé, qu'il lance lui-même, réduit, et qu'il ne déplie que pour un code. Vous pouvez vous en passer avec l'extension Chrome (bêta) : elle remplit le formulaire directement dans votre Chrome habituel, sans deuxième fenêtre.</p>
       </details>
       <details>
         <summary>Pourquoi mon Mac me demande-t-il mon mot de passe de session ?</summary>
-        <p>À chaque connexion, après la fenêtre Sésame, macOS affiche la sienne : « security veut utiliser vos informations confidentielles stockées dans “Sésame — edf” ». C'est le Trousseau d'Apple qui demande, parce que Sésame range ses secrets sans application de confiance. Tapez le mot de passe de votre session et cliquez « Autoriser » (Allow). Ne cliquez jamais « Toujours autoriser » : n'importe quel programme pourrait ensuite lire le mot de passe en silence.</p>
+        <p>Sésame a son propre assistant, reconnu par le Trousseau d'Apple. À la première utilisation d'un site, le Trousseau demande une fois votre accord pour cet assistant : cliquez « Toujours autoriser ». Ensuite, plus rien — Sésame se connecte tout seul, sans redemander votre mot de passe de session.</p>
+      </details>
+      <details>
+        <summary>Comment installer l'extension Chrome ?</summary>
+        <p>Depuis la graine dans la barre des menus : « Navigateur » puis « Installer… ». Sésame ouvre <code>chrome://extensions</code> et active le mode développeur pour vous ; chargez le dossier <code>extension/</code>, copiez l'ID affiché sous son nom, collez-le dans Sésame et cliquez « Relier ». Sésame confirme quand la connexion est active. C'est une bêta : dans votre Chrome habituel, une autre extension ayant accès à la page pourrait en théorie observer la frappe, comme elle pourrait vous observer vous-même.</p>
       </details>
       <details>
         <summary>Et les codes par SMS ou l'application d'authentification ?</summary>
@@ -660,7 +664,7 @@
           </a>
         </div>
         <div class="meta">
-          <div><span>Version</span><span>0.5.0 · prototype, archive zip avec l'app de la barre des menus</span></div>
+          <div><span>Version</span><span>0.5.1 · prototype, archive zip avec l'app de la barre des menus</span></div>
           <div><span>Prérequis</span><span>macOS 13 ou plus récent, Google Chrome, Node.js 20 ou plus récent</span></div>
           <div><span>Prix</span><span>Gratuit, code ouvert</span></div>
         </div>
@@ -687,8 +691,8 @@
       text: 'Claude appelle l’outil <code>sesame_login("edf")</code> avec un motif : « récupérer la facture d’août ».'
     },
     {
-      title: "Vous autorisez",
-      text: "La fenêtre « Sésame — demande d’accès » s’affiche, puis le Trousseau d’Apple vous demande le mot de passe de votre session."
+      title: "Automatique, ou vous validez",
+      text: "Sur un site en Automatique, rien à faire : Sésame se connecte tout seul. Sur un site « Me demander », une fenêtre Sésame apparaît — celle du Trousseau a disparu, grâce à l’assistant Sésame."
     },
     {
       title: "Sésame remplit",

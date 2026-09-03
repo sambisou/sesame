@@ -35,7 +35,7 @@ struct SesameApp: App {
 /// La graine de sésame avec son trou de serrure. En barre des menus : image template (blanche sur barre sombre).
 enum SeedIcon {
     /// Dessine la graine dans un carré de 100 × 100 (origine en bas à gauche).
-    static func drawGlyph(in ctx: CGContext, keyhole: Bool = true) {
+    static func drawGlyph(in ctx: CGContext, keyhole: Bool = true, holeColor: NSColor? = nil) {
         let seed = NSBezierPath()
         seed.move(to: NSPoint(x: 50, y: 96))
         seed.curve(to: NSPoint(x: 84, y: 36), controlPoint1: NSPoint(x: 72, y: 78), controlPoint2: NSPoint(x: 84, y: 58))
@@ -43,14 +43,19 @@ enum SeedIcon {
         seed.curve(to: NSPoint(x: 16, y: 36), controlPoint1: NSPoint(x: 31, y: 4), controlPoint2: NSPoint(x: 16, y: 16))
         seed.curve(to: NSPoint(x: 50, y: 96), controlPoint1: NSPoint(x: 16, y: 58), controlPoint2: NSPoint(x: 28, y: 78))
         seed.close()
-        if keyhole {
-            let hole = NSBezierPath(ovalIn: NSRect(x: 39, y: 40, width: 22, height: 22))
-            hole.move(to: NSPoint(x: 46, y: 42)); hole.line(to: NSPoint(x: 54, y: 42))
-            hole.line(to: NSPoint(x: 58, y: 22)); hole.line(to: NSPoint(x: 42, y: 22)); hole.close()
-            seed.append(hole)
-            seed.windingRule = .evenOdd
-        }
         seed.fill()
+        if keyhole {
+            // Le trou de serrure est DÉCOUPÉ (mode clear) : cercle et fût se chevauchent sans laisser de trait,
+            // contrairement à un remplissage pair-impair où le chevauchement se recolore.
+            ctx.saveGState()
+            if let c = holeColor { c.setFill() } else { ctx.setBlendMode(.clear) }   // icône d'app : fond sombre ; barre des menus : transparent
+            NSBezierPath(ovalIn: NSRect(x: 39, y: 40, width: 22, height: 22)).fill()
+            let shaft = NSBezierPath()
+            shaft.move(to: NSPoint(x: 46, y: 48)); shaft.line(to: NSPoint(x: 54, y: 48))
+            shaft.line(to: NSPoint(x: 58, y: 22)); shaft.line(to: NSPoint(x: 42, y: 22)); shaft.close()
+            shaft.fill()
+            ctx.restoreGState()
+        }
     }
 
     static func menuBar(alert: Bool, size: CGFloat = 18) -> NSImage {
@@ -92,7 +97,7 @@ enum SeedIcon {
             ctx.translateBy(x: (size - side) / 2, y: (size - side) / 2)
             ctx.scaleBy(x: side / 100, y: side / 100)
             NSColor(red: 0.85, green: 0.64, blue: 0.25, alpha: 1).setFill()
-            drawGlyph(in: ctx)
+            drawGlyph(in: ctx, holeColor: NSColor(red: 0.11, green: 0.10, blue: 0.09, alpha: 1))
             ctx.restoreGState()
             return true
         }

@@ -226,10 +226,15 @@ final class Store {
     func removeSite(_ key: String) {
         guard loadSites() else { lastError = "sites.json illisible : rien n'a été modifié."; return }
         let had = security(["find-generic-password", "-s", service, "-a", key]).status == 0
-        let del = security(["delete-generic-password", "-s", service, "-a", key])
-        if had && del.status != 0 {
-            lastError = "Le Trousseau a refusé de supprimer le secret de « \(key) » (code \(del.status)). Le site est conservé."
-            log(site: key, action: "remove_site", result: "échec", detail: "suppression Trousseau refusée (code \(del.status))")
+        let delStatus: Int32
+        if let helper = keychainHelperPath {
+            delStatus = runHelper(helper, ["delete", service, key])
+        } else {
+            delStatus = security(["delete-generic-password", "-s", service, "-a", key]).status
+        }
+        if had && delStatus != 0 {
+            lastError = "Le Trousseau a refusé de supprimer le secret de « \(key) » (code \(delStatus)). Le site est conservé."
+            log(site: key, action: "remove_site", result: "échec", detail: "suppression Trousseau refusée (code \(delStatus))")
             return
         }
         raw.removeValue(forKey: key)
@@ -238,7 +243,10 @@ final class Store {
         loadSites()
     }
 
-    /// Enregistre un site : le secret va au Trousseau (sans application de confiance), jamais ailleurs.
+    /// Enregistre un site : le secret va au Trousseau, jamais ailleurs. Quand l'assistant Trousseau
+    /// embarqué dans ce bundle est présent, c'est lui qui crée l'élément (voir keychainHelperPath /
+    /// runHelper) : l'élément lui appartient et il pourra le relire sans invite. Sinon, repli sur
+    /// `security -T ""` (aucune application de confiance : chaque lecture demande).
     func addSite(name: String, url: String, username: String, password: String, note: String) -> String? {
         let key = Store.normalize(name)
         guard !key.isEmpty, key.count <= 64, key.range(of: #"^[a-z0-9._-]+$"#, options: .regularExpression) != nil else { return "Donne un nom court au site (lettres, chiffres, tirets — ex. infomaniak)." }
@@ -250,12 +258,18 @@ final class Store {
         let existing = raw[key] as? [String: Any]
         let domain = existing?["domain"] as? String ?? Store.siteDomain(for: host)
         let payload: [String: String] = ["username": username.trimmingCharacters(in: .whitespaces), "password": password]
-        guard let pd = try? JSONSerialization.data(withJSONObject: payload), let ps = String(data: pd, encoding: .utf8) else { return "Erreur interne." }
-        _ = security(["delete-generic-password", "-s", service, "-a", key])
-        let r = security(["add-generic-password", "-s", service, "-a", key, "-l", "Sésame — \(key)", "-D", "Identifiants Sésame (Claude)", "-T", "", "-w", ps])
-        guard r.status == 0 else {
-            log(site: key, action: "add_site", result: "échec", detail: "écriture Trousseau (code \(r.status))")
-            return "Le Trousseau a refusé l'écriture (code \(r.status)). Est-il déverrouillé ?"
+        guard let pd = try? JSONSerialization.data(withJSONObject: payload) else { return "Erreur interne." }
+        let writeStatus: Int32
+        if let helper = keychainHelperPath {
+            writeStatus = runHelper(helper, ["set", service, key], stdin: pd)
+        } else {
+            guard let ps = String(data: pd, encoding: .utf8) else { return "Erreur interne." }
+            _ = security(["delete-generic-password", "-s", service, "-a", key])
+            writeStatus = security(["add-generic-password", "-s", service, "-a", key, "-l", "Sésame — \(key)", "-D", "Identifiants Sésame (Claude)", "-T", "", "-w", ps]).status
+        }
+        guard writeStatus == 0 else {
+            log(site: key, action: "add_site", result: "échec", detail: "écriture Trousseau (code \(writeStatus))")
+            return "Le Trousseau a refusé l'écriture (code \(writeStatus)). Est-il déverrouillé ?"
         }
         // Le Trousseau a pris quelques centaines de ms : on repart du fichier tel qu'il est maintenant.
         guard loadSites() else { return "Secret enregistré, mais sites.json est devenu illisible." }
@@ -299,6 +313,31 @@ final class Store {
         p.waitUntilExit()
         let s = String(data: out.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
         return (p.terminationStatus, s)
+    }
+
+    /// Chemin de l'assistant Trousseau embarqué dans ce bundle (à côté de SesameBar), s'il existe. Voir
+    /// macos/Sources/SesameKeychain/main.swift : lui seul écrit/supprime en silence, `security` ne le peut plus.
+    private var keychainHelperPath: String? {
+        guard let exe = Bundle.main.executableURL else { return nil }
+        let p = exe.deletingLastPathComponent().appendingPathComponent("sesame-keychain").path
+        return FileManager.default.fileExists(atPath: p) ? p : nil
+    }
+
+    /// Lance l'assistant Trousseau avec les arguments donnés, en écrivant `stdin` sur son entrée standard
+    /// (jamais en argv — un secret ne doit jamais apparaître dans la liste des processus). Renvoie
+    /// uniquement le code de sortie : la sortie de l'assistant n'est ni lue ni journalisée ici.
+    @discardableResult
+    private func runHelper(_ path: String, _ args: [String], stdin: Data? = nil) -> Int32 {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: path)
+        p.arguments = args
+        p.standardOutput = Pipe(); p.standardError = Pipe()
+        let inPipe = Pipe(); p.standardInput = inPipe
+        do { try p.run() } catch { return -1 }
+        if let stdin { inPipe.fileHandleForWriting.write(stdin) }
+        try? inPipe.fileHandleForWriting.close()
+        p.waitUntilExit()
+        return p.terminationStatus
     }
 
     /// Identique à normalizeName (src/config.js) : minuscules, tout le reste devient un tiret.

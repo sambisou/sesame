@@ -85,17 +85,30 @@ export function hasSecret(siteKey) {
 }
 
 /**
- * L'élément a-t-il encore une application de confiance (créé avant Sésame 0.3, ou « Toujours autoriser » cliqué) ?
- * Renvoie true si `security` figure dans l'ACL, false sinon, null si indéterminable.
+ * Pour chaque site de Sésame : l'élément a-t-il une application de confiance (créé avant 0.3, ou « Toujours
+ * autoriser » cliqué) ? Un seul `dump-keychain -a` pour tous (lent : plusieurs dizaines de secondes sur un gros
+ * Trousseau). Renvoie { [siteKey]: true | false } ; les sites absents du résultat sont indéterminables.
  */
-export function hasTrustedApp(siteKey) {
+export function trustedAppsByAccount() {
+  const out = {};
   try {
-    assertKey(siteKey);
     const dump = sec(["dump-keychain", "-a"]);
-    const block = dump.split(/^keychain: /m).find(b => b.includes(`"svce"<blob>="${KEYCHAIN_SERVICE}"`) && b.includes(`"acct"<blob>="${siteKey}"`));
-    if (!block) return null;
-    return /\/usr\/bin\/security|group: com\.apple/.test(block);
-  } catch {
-    return null;
-  }
+    for (const block of dump.split(/^keychain: /m)) {
+      if (!block.includes(`"svce"<blob>="${KEYCHAIN_SERVICE}"`) || !block.includes("access:")) continue;
+      const acct = block.match(/"acct"<blob>="([^"]+)"/)?.[1];
+      if (!acct) continue;
+      // Première entrée d'accès (decrypt) : « applications (N) » — N > 0 signifie qu'une application lit sans demander.
+      const acl = block.split("access:", 2)[1];
+      const m = acl.match(/applications \((\d+)\)/);
+      out[acct] = m ? Number(m[1]) > 0 : /\/usr\/bin\/security/.test(acl);
+    }
+  } catch {}
+  return out;
+}
+
+/** Variante pour un seul site (même coût qu'un dump complet) : true / false / null si indéterminable. */
+export function hasTrustedApp(siteKey) {
+  try { assertKey(siteKey); } catch { return null; }
+  const r = trustedAppsByAccount()[siteKey];
+  return r === undefined ? null : r;
 }

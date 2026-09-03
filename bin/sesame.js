@@ -10,7 +10,7 @@ import {
   HOME, SITES_FILE, JOURNAL_FILE, CHROME_PROFILE, CDP_URL, POLICIES,
   loadSites, saveSites, normalizeName, siteDomainFor, assertLoginUrl, ensureHome,
 } from "../src/config.js";
-import { setSecret, deleteSecret, hasSecret, hasTrustedApp, keychainAvailable } from "../src/keychain.js";
+import { setSecret, deleteSecret, hasSecret, trustedAppsByAccount, keychainAvailable } from "../src/keychain.js";
 import { readJournal, formatEvent, logEvent } from "../src/journal.js";
 import { lock, unlock, isLocked, assertPolicy } from "../src/policy.js";
 
@@ -316,10 +316,16 @@ async function doctor() {
   const sites = loadSites();
   const n = Object.keys(sites).length;
   ok(n > 0, `${n} site(s) enregistré(s)`);
-  if (keychainAvailable()) for (const k of Object.keys(sites)) {
-    ok(hasSecret(k), `Trousseau : secret présent pour « ${k} »`);
-    const trusted = hasTrustedApp(k);
-    if (trusted === true) console.log(`⚠️  « ${k} » : l'élément du Trousseau a une application de confiance (créé avant 0.3, ou « Toujours autoriser » cliqué) → lecture silencieuse possible par tout processus. Réenregistre-le : sesame add ${k}`);
+  if (keychainAvailable()) {
+    for (const k of Object.keys(sites)) ok(hasSecret(k), `Trousseau : secret présent pour « ${k} »`);
+    if (n > 0 && !args.includes("--fast")) {
+      process.stdout.write("   (lecture des droits d'accès du Trousseau, peut prendre une minute… --fast pour sauter)\n");
+      const trusted = trustedAppsByAccount();
+      for (const k of Object.keys(sites)) {
+        if (trusted[k] === true) console.log(`⚠️  « ${k} » : l'élément du Trousseau a une application de confiance (créé avant 0.3, ou « Toujours autoriser » cliqué) → lecture silencieuse possible par tout processus. Réenregistre-le : sesame add ${k}`);
+        else if (trusted[k] === false) ok(true, `Trousseau : « ${k} » sans application de confiance (chaque lecture te sera demandée)`);
+      }
+    }
   }
   ok(!isLocked(), isLocked() ? "Verrou global ACTIF" : "Verrou global inactif");
   ok(!!chromeBinary(), "Google Chrome installé");

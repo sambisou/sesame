@@ -201,6 +201,14 @@
   .step p { color: var(--ink-2); }
   .step .say { margin-top: 16px; padding: 12px 16px; border-radius: 12px; background: var(--bg-2); font-style: italic; color: var(--ink); }
 
+  /* Screenshots */
+  .shots { display: grid; grid-template-columns: 1fr 1fr; gap: 28px; margin-top: 48px; }
+  @media (max-width: 800px) { .shots { grid-template-columns: 1fr; } }
+  .shot { margin: 0; border: 1px solid var(--line); border-radius: 18px; background: var(--card); padding: 18px; display: flex; flex-direction: column; gap: 14px; }
+  .shot img { width: 100%; height: auto; border-radius: 10px; border: 1px solid var(--line); background: var(--bg-2); }
+  .shot figcaption { font-size: .95rem; color: var(--ink-2); line-height: 1.5; }
+  .shot figcaption b { color: var(--ink); }
+
   /* Security */
   .sec-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 64px; align-items: start; margin-top: 12px; }
   @media (max-width: 900px) { .sec-grid { grid-template-columns: 1fr; gap: 40px; } }
@@ -288,6 +296,7 @@
     <a class="brand" href="#"><svg><use href="#mark"/></svg><span>Sésame</span></a>
     <ul>
       <li><a href="#how">Comment ça marche</a></li>
+      <li><a href="#flow">Écran par écran</a></li>
       <li><a href="#security">Sécurité</a></li>
       <li><a href="#compat">Compatibilité</a></li>
       <li><a href="#faq">Questions</a></li>
@@ -401,6 +410,32 @@
   </div>
 </section>
 
+<section id="flow">
+  <div class="wrap">
+    <p class="eyebrow">Écran par écran</p>
+    <h2>Ce que vous verrez vraiment, sur votre Mac.</h2>
+    <p class="lede" style="margin-top:20px">Des captures de Sésame tel qu'il est, pas des maquettes. Trois fenêtres au quotidien, une graine dans la barre des menus.</p>
+    <div class="shots">
+      <figure class="shot">
+        <img src="img/panneau.png" alt="Le panneau Sésame dans la barre des menus : liste des sites avec leur règle, journal, verrou" loading="lazy">
+        <figcaption><b>1 · La graine dans la barre des menus.</b> Vos sites, la règle de chacun (me demander, automatique, coupé), le journal des accès, l'interrupteur « Verrou » qui bloque tout, et le bouton pour ajouter un site.</figcaption>
+      </figure>
+      <figure class="shot">
+        <img src="img/fenetre-identifiants.png" alt="La fenêtre Sésame qui demande identifiant et mot de passe pour un site, avec l'œil pour afficher le mot de passe" loading="lazy">
+        <figcaption><b>2 · La fenêtre d'identifiants.</b> Quand Claude a besoin d'un site que Sésame ne connaît pas, cette fenêtre s'ouvre : identifiant, mot de passe avec l'œil pour le relire, « Plus tard » ou « Enregistrer ». Le mot de passe part dans le Trousseau. Claude apprend seulement que le site est disponible.</figcaption>
+      </figure>
+      <figure class="shot">
+        <img src="img/dialogue-acces.png" alt="La demande d'accès Sésame : qui demande, quel site, pourquoi, boutons Refuser et Autoriser" loading="lazy">
+        <figcaption><b>3 · La demande d'accès, à chaque connexion.</b> Qui demande, quel site, pourquoi. « Refuser » est le bouton par défaut. Juste après, le Trousseau d'Apple affiche sa propre fenêtre et demande le mot de passe de votre session : tapez-le et cliquez « Autoriser », jamais « Toujours autoriser ».</figcaption>
+      </figure>
+      <figure class="shot">
+        <img src="img/bandeau-code.png" alt="Le bandeau Sésame en haut de la page qui attend la saisie du code reçu par e-mail ou SMS" loading="lazy">
+        <figcaption><b>4 · Le code, c'est vous.</b> Si le site envoie un code par SMS, e-mail ou application, un bandeau apparaît en haut de la page et Sésame attend. Vous tapez le code, le site l'accepte, Claude reprend.</figcaption>
+      </figure>
+    </div>
+  </div>
+</section>
+
 <section id="security">
   <div class="wrap">
     <p class="eyebrow">Sécurité</p>
@@ -453,6 +488,7 @@
       <span class="chip"><span class="dot"></span>Claude Desktop et Cowork</span>
       <span class="chip"><span class="dot"></span>Claude Code</span>
       <span class="chip"><span class="dot"></span>Claude dans Chrome</span>
+      <span class="chip soon"><span class="dot"></span>Extension Chrome à venir : votre Chrome habituel, sans fenêtre à part</span>
       <span class="chip soon"><span class="dot"></span>Cursor, VS Code, Windsurf · compatible, non testé</span>
       <span class="chip soon"><span class="dot"></span>Codex CLI, Gemini CLI · compatible, non testé</span>
       <span class="chip soon"><span class="dot"></span>ChatGPT · via connecteur distant, non testé</span>
@@ -538,7 +574,7 @@
           </a>
         </div>
         <div class="meta">
-          <div><span>Version</span><span>0.3.1 · prototype, archive zip avec l'app de la barre des menus</span></div>
+          <div><span>Version</span><span>0.4.0 · prototype, archive zip avec l'app de la barre des menus</span></div>
           <div><span>Prérequis</span><span>macOS 13 ou plus récent, Google Chrome, Node.js 20 ou plus récent</span></div>
           <div><span>Prix</span><span>Gratuit, code ouvert</span></div>
         </div>

@@ -22,7 +22,8 @@ const head = `<!doctype html>
 </head>
 <body>
 `;
-fs.mkdirSync("dist", { recursive: true });
+fs.mkdirSync("dist/img", { recursive: true });
+for (const f of fs.readdirSync("img")) fs.copyFileSync("img/" + f, "dist/img/" + f);
 fs.writeFileSync("dist/index.html", head + body + "\n</body>\n</html>\n");
 fs.writeFileSync("dist/_headers", "/*\n  X-Content-Type-Options: nosniff\n  Referrer-Policy: strict-origin-when-cross-origin\n  Permissions-Policy: camera=(), microphone=(), geolocation=()\n");
 console.log("dist/index.html", fs.statSync("dist/index.html").size, "octets");

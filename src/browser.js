@@ -71,7 +71,7 @@ async function cdpReachable() { return (await cdpProbe()) === "up"; }
 /** Ramène le Chrome Sésame devant (Page.bringToFront n'active pas l'application sur macOS). */
 export function activateChrome() {
   try {
-    const pids = execFileSync("/usr/bin/pgrep", ["-f", `--user-data-dir=${CHROME_PROFILE}`], { encoding: "utf8" }).trim().split("\n").filter(Boolean);
+    const pids = execFileSync("/usr/bin/pgrep", ["-f", "--", `--user-data-dir=${CHROME_PROFILE}`], { encoding: "utf8" }).trim().split("\n").filter(Boolean);
     if (pids[0]) execFileSync("/usr/bin/osascript", ["-e", `tell application "System Events" to set frontmost of (first process whose unix id is ${Number(pids[0])}) to true`], { stdio: "ignore", timeout: 3000 });
   } catch {}
 }

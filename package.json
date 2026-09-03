@@ -1,6 +1,6 @@
 {
   "name": "sesame-mcp",
-  "version": "0.1.0",
+  "version": "0.4.0",
   "description": "Sésame — coffre local d'identifiants pour Claude : remplit les formulaires de connexion dans Chrome sans jamais révéler les secrets à l'IA. Serveur MCP + CLI.",
   "type": "module",
   "private": true,

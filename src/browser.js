@@ -1,7 +1,9 @@
 // Connexion à Chrome (protocole DevTools) et remplissage des champs.
 // Chrome doit tourner avec --remote-debugging-port (voir `sesame chrome`).
+import fs from "node:fs";
+import { spawn } from "node:child_process";
 import { chromium } from "playwright-core";
-import { CDP_URL, siteMatchesUrl } from "./config.js";
+import { CDP_URL, CHROME_PROFILE, siteMatchesUrl } from "./config.js";
 
 // Champs de recherche et assimilés : jamais un identifiant.
 const NOT_SEARCH = ':not([type="search"]):not([role="searchbox"]):not([name*="search" i]):not([id*="search" i]):not([name*="recherche" i]):not([id*="recherche" i]):not([name="q"]):not([placeholder*="recherch" i]):not([placeholder*="search" i])';
@@ -41,7 +43,37 @@ const OTP_WEAK = [
 ];
 const OTP_TEXT = /code (de |d')?(vérification|verification|sécurité|securite|confirmation|validation|à usage unique|unique)|code (reçu|recu|envoyé|envoye|transmis)|(envoyé|envoye|reçu|recu) par (sms|e-?mail|courriel|mail)|code (à|a|de) \d+ chiffres|saisis(?:sez)? (?:le|votre) code|entrez (?:le|votre) code|verification code|security code|one-time (code|password)|\d[- ]digit code|code (that|we) sent|sent (you|to you) (a|the) code|enter (the|your|a) code|two-factor|2fa|deux facteurs|double authentification|authentification forte|authenticator/i;
 
+async function cdpReachable() {
+  try {
+    const r = await fetch(`${CDP_URL}/json/version`, { signal: AbortSignal.timeout(1500) });
+    return r.ok;
+  } catch { return false; }
+}
+
+/** Lance le Chrome « Sésame » (profil dédié, port DevTools) comme `sesame chrome`, et attend qu'il réponde. */
+export async function launchChrome({ waitMs = 15000 } = {}) {
+  const bin = process.env.SESAME_CHROME || "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
+  if (!fs.existsSync(bin)) throw new Error("Google Chrome n'est pas dans /Applications : installe-le, ou lance le Chrome Sésame à la main.");
+  const port = CDP_URL.split(":").pop();
+  const child = spawn(bin, [
+    `--remote-debugging-port=${port}`, `--user-data-dir=${CHROME_PROFILE}`,
+    "--no-first-run", "--no-default-browser-check", "--password-store=basic", "about:blank",
+  ], { detached: true, stdio: "ignore" });
+  child.unref();
+  const deadline = Date.now() + waitMs;
+  while (Date.now() < deadline) {
+    if (await cdpReachable()) return true;
+    await new Promise(r => setTimeout(r, 500));
+  }
+  return false;
+}
+
 export async function connect() {
+  // Chrome Sésame fermé : on le lance nous-mêmes (Sam n'a pas à passer par un terminal).
+  if (!(await cdpReachable())) {
+    const up = await launchChrome();
+    if (!up) throw new Error(`Chrome Sésame ne répond pas sur ${CDP_URL} après lancement. Vérifie qu'un autre Chrome n'occupe pas le port.`);
+  }
   try {
     return await chromium.connectOverCDP(CDP_URL, { timeout: 15000 });
   } catch (e) {

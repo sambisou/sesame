@@ -16,3 +16,4 @@ LOCKED
 sesame-macos.zip
 macos/.build/
 macos/build/
+store/*.zip

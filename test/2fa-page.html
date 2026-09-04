@@ -9,10 +9,24 @@
 <div id="s4" hidden><h2>Bienvenue, vous êtes connecté.</h2></div>
 <script>
 // ?no2fa=1 : pas de code après le mot de passe. ?hop=1 : « Suivant » envoie sur un AUTRE hôte (localhost au lieu de 127.0.0.1),
-// comme une redirection SSO : Sésame doit alors abandonner sans taper le mot de passe. ?noform=1 : page sans formulaire.
-const q = new URLSearchParams(location.search); const no2fa = q.get("no2fa") === "1"; const hop = q.get("hop") === "1";
+// comme une redirection SSO : Sésame doit alors abandonner sans taper le mot de passe (la page d'arrivée est un
+// formulaire e-mail frais, sans mot de passe). ?noform=1 : page sans formulaire.
+// ?idp=1 : « Suivant » envoie sur ?step=pwd, un fournisseur d'identité séparé qui affiche DIRECTEMENT le mot de
+// passe (cas Expedia : expediapartnercentral.com → accounts.expediagroup.com) : apprentissage assisté attendu
+// (needsDomain avec extraDomains absent, succès avec extraDomains:["localhost"]).
+// ?late=1 : identifiant et mot de passe sur la MÊME page, mais le champ mot de passe n'est rendu que 800 ms
+// après le chargement (hydratation tardive, cas Yealink) : doit être rempli sans clic intermédiaire.
+const q = new URLSearchParams(location.search);
+const no2fa = q.get("no2fa") === "1", hop = q.get("hop") === "1", idp = q.get("idp") === "1", late = q.get("late") === "1";
 if (q.get("noform") === "1") { s1.hidden = true; document.body.insertAdjacentHTML("beforeend", "<p>Page d'accueil, sans formulaire.</p>"); }
-next.onclick = () => { if (!email.value) return; if (hop) { location.href = "http://localhost:" + location.port + "/2fa-page.html?hopped=1"; return; } s1.hidden = true; s2.hidden = false; };
+if (q.get("step") === "pwd") { s1.hidden = true; s2.hidden = false; }
+if (late) { s2.hidden = true; setTimeout(() => { s2.hidden = false; }, 800); }
+next.onclick = () => {
+  if (!email.value) return;
+  if (hop) { location.href = "http://localhost:" + location.port + "/2fa-page.html?hopped=1"; return; }
+  if (idp) { location.href = "http://localhost:" + location.port + "/2fa-page.html?step=pwd" + (no2fa ? "&no2fa=1" : ""); return; }
+  s1.hidden = true; s2.hidden = false;
+};
 go.onclick = () => { if (pwd.value !== "bonmotdepasse") return; s2.hidden = true; if (no2fa) { s4.hidden = false; } else { s3.hidden = false; } };
 ok.onclick = () => { if (otp.value === "424242") { s3.hidden = true; s4.hidden = false; } else { err.hidden = false; } };
 </script>

@@ -1,8 +1,9 @@
 {
   "manifest_version": 3,
-  "name": "Sésame",
-  "version": "0.5.1",
-  "description": "Remplit vos formulaires de connexion à la demande du serveur Sésame installé sur votre Mac. Rien ne quitte votre ordinateur.",
+  "name": "__MSG_extName__",
+  "version": "0.6.0",
+  "description": "__MSG_extDescription__",
+  "default_locale": "en",
   "minimum_chrome_version": "116",
   "permissions": ["nativeMessaging", "tabs", "scripting", "storage", "notifications"],
   "host_permissions": ["<all_urls>"],

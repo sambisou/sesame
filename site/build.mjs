@@ -1,5 +1,5 @@
 // Construit dist/ à partir du gabarit site/template.html et des dictionnaires site/i18n/<lang>.json.
-// Une langue sans dictionnaire n'est simplement pas construite (voir README.md pour en ajouter une).
+// Le site ne vise que deux langues : anglais (racine /) et français (/fr/).
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -10,18 +10,12 @@ const DIST_DIR = path.join(SITE, "dist");
 const SITE_URL = "https://sesamekey.app";
 const DEFAULT_LANG = "en";
 
-// Table des langues visées, y compris celles pas encore traduites : le build
-// ne génère que celles qui ont un site/i18n/<code>.json, mais les balises
-// hreflang de toutes les langues sont posées dès maintenant.
+// Table des deux langues visées ; le build ne génère que celles qui ont un
+// site/i18n/<code>.json, mais les balises hreflang des deux sont posées
+// dès maintenant.
 const LANGS = [
   { code: "en", label: "EN", htmlLang: "en", ogLocale: "en_US", prefix: "" },
   { code: "fr", label: "FR", htmlLang: "fr", ogLocale: "fr_FR", prefix: "/fr" },
-  { code: "de", label: "DE", htmlLang: "de", ogLocale: "de_DE", prefix: "/de" },
-  { code: "es", label: "ES", htmlLang: "es", ogLocale: "es_ES", prefix: "/es" },
-  { code: "it", label: "IT", htmlLang: "it", ogLocale: "it_IT", prefix: "/it" },
-  { code: "pt", label: "PT", htmlLang: "pt", ogLocale: "pt_PT", prefix: "/pt" },
-  { code: "nl", label: "NL", htmlLang: "nl", ogLocale: "nl_NL", prefix: "/nl" },
-  { code: "ja", label: "JA", htmlLang: "ja", ogLocale: "ja_JP", prefix: "/ja" },
 ];
 
 const favicon = "data:image/svg+xml," + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><path d="M32 3C46 14 54 27 54 41c0 13-10 20-22 20S10 54 10 41c0-14 8-27 22-38z" fill="#C48A22"/><mask id="h"><circle cx="32" cy="31" r="7" fill="#fff"/><path d="M29.4 36h5.2l2.4 12h-10z" fill="#fff"/></mask><rect width="64" height="64" fill="#1A1714" mask="url(#h)"/></svg>');
@@ -68,14 +62,14 @@ function homeHref(prefix) {
   return prefix === "" ? "/" : `${prefix}/`;
 }
 
-// --- sélecteur de langue de la nav : <select> compact, EN FR DE ES IT PT NL JA, langue courante sélectionnée ---
+// --- sélecteur de langue de la nav : deux liens sobres « EN | FR », langue courante non cliquable ---
 function langSwitcherHtml(dict, currentCode) {
   const ariaLabel = dict.nav.langSwitcherLabel;
-  const options = LANGS.map(({ code, label, prefix }) => {
-    const current = code === currentCode;
-    return `<option value="${homeHref(prefix)}" data-lang="${code}"${current ? " selected" : ""}>${label}</option>`;
-  }).join("");
-  return `<select class="langselect" aria-label="${ariaLabel}" onchange="var o=this.options[this.selectedIndex];try{localStorage.setItem('sesame-lang',o.getAttribute('data-lang'))}catch(e){}location.href=this.value">${options}</select>`;
+  const items = LANGS.map(({ code, label, prefix }) => {
+    if (code === currentCode) return `<span aria-current="page">${label}</span>`;
+    return `<a href="${homeHref(prefix)}" data-lang="${code}" onclick="try{localStorage.setItem('sesame-lang','${code}')}catch(e){}">${label}</a>`;
+  });
+  return `<div class="langlinks" role="group" aria-label="${ariaLabel}">${items.join('<span aria-hidden="true">·</span>')}</div>`;
 }
 
 // --- balises hreflang pour toutes les langues visées + x-default ---

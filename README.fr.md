@@ -27,7 +27,8 @@ Le principe : Claude ne demande pas *« donne-moi le mot de passe EDF »*, il de
 | `sesame_list_sites` | liste les sites connus | noms, domaines, politiques — **pas de secret** |
 | `sesame_login` | remplit et soumet le formulaire de connexion dans Chrome, attend un code de 2e facteur si le site en demande un | `ok / refusé / échec` + étapes + URL |
 | `sesame_wait_code` | reprend l'attente d'un code de 2e facteur que tu tapes toi-même | `ok / échec` |
-| `sesame_request_site` | quand un site n'est pas encore enregistré : ouvre des fenêtres Sésame sur le Mac pour que **toi** tu saisisses identifiant et mot de passe (directement dans le Trousseau) | `enregistré / refusé / déjà connu` — jamais les valeurs |
+| `sesame_request_site` | quand un site n'est pas encore enregistré : ouvre une fenêtre Sésame sur le Mac pour que **toi** tu saisisses identifiant et mot de passe (directement dans le Trousseau) — **non bloquant** : répond tout de suite avec `status: "attente"` et un `requestId` | `attente` + `requestId` — jamais les valeurs |
+| `sesame_request_status` | suit une demande `sesame_request_site`, sans jamais bloquer | `attente / enregistré / refusé / expiré` |
 | `sesame_open_login` | ouvre la page de connexion d'un site | URL |
 | `sesame_journal` | lit le journal d'accès | événements |
 
@@ -87,9 +88,11 @@ Une connexion par l'extension se fait en deux temps : Sésame demande d'abord à
 - ajouter un site : une seule fenêtre avec identifiant, mot de passe et un œil pour l'afficher ; le secret part directement dans le Trousseau ;
 - supprimer un site (et son secret), activer le **Bloquer** global, ouvrir le Chrome Sésame, lire les dernières lignes du journal.
 
-Quand Claude a besoin d'un site pas encore enregistré, l'app ouvre cette même fenêtre pour toi (`sesame_request_site`). Si l'app ne tourne pas, Sésame retombe sur les boîtes de dialogue macOS.
+Quand Claude a besoin d'un site pas encore enregistré, l'app ouvre cette même fenêtre pour toi (`sesame_request_site`, non bloquant — voir plus bas) ; la fenêtre a aussi un champ optionnel « Autres domaines de connexion », pré-rempli quand Claude sait déjà qu'il en faut un. Si l'app ne tourne pas, Sésame retombe sur les boîtes de dialogue macOS.
 
 Pour la construire toi-même : `cd macos && ./scripts/make-app.sh release` (Swift 6, macOS 14+), le bundle arrive dans `macos/build/Sésame.app`.
+
+Note de langue : l'app, ses fenêtres, les boîtes de dialogue macOS, les notifications et le bandeau d'attente du code suivent la langue du Mac — anglais par défaut, français si la langue du système est le français. La CLI reste en français (les noms de commandes ne changent pas de toute façon), et le journal (`~/.sesame/journal.jsonl`) ainsi que les valeurs vues par Claude (`reason`, `steps`, `message`…) restent toujours en français : ce sont des données pour le modèle, pas du texte d'interface.
 
 ## Enregistrer un site
 
@@ -109,10 +112,23 @@ Options utiles :
 | `--pass-sel '#pwd'` | idem pour le mot de passe |
 | `--submit-sel 'button.login'` | idem pour le bouton de validation |
 | `--note "compte pro"` | mémo affiché dans `sesame list` |
+| `--extra-domain exemple.com` (répétable) | un autre domaine enregistrable où la connexion peut basculer pour le mot de passe (voir plus bas) |
 
 Relancer `sesame add edf` sur un site existant met à jour le secret (changement de mot de passe).
 
-**Sans terminal :** quand Claude a besoin d'un site pas encore enregistré, il appelle `sesame_request_site`. Sésame ouvre trois petites fenêtres sur ton Mac (confirmation, identifiant, mot de passe), range tout dans le Trousseau, et Claude apprend seulement que le site est disponible.
+**Sans terminal :** quand Claude a besoin d'un site pas encore enregistré, il appelle `sesame_request_site`. Cet appel répond tout de suite (`status: "attente"`, un `requestId`) — il ne bloque jamais Claude en attendant que tu répondes. Sésame ouvre une fenêtre sur ton Mac (identifiant, mot de passe, et un champ optionnel « autres domaines de connexion »), range tout dans le Trousseau, et Claude interroge ensuite `sesame_request_status(requestId)` jusqu'à lire `enregistré`, `refusé` ou `expiré` (pas de réponse en 10 minutes). Si l'app ne tourne pas, Sésame retombe sur trois boîtes de dialogue macOS courtes, mais bloquantes.
+
+## Un domaine différent pour le mot de passe (fournisseurs d'identité)
+
+Certains parcours de connexion basculent, en cours de route, vers un **domaine enregistrable distinct** — un fournisseur d'identité séparé, pas un simple sous-domaine du même site. Exemple : Expedia Partner Central demande l'e-mail sur `www.expediapartnercentral.com`, mais la page de mot de passe est servie depuis `accounts.expediagroup.com` — un domaine entièrement différent. Les sauts de sous-domaine ordinaires (`login.exemple.com` → `app.exemple.com`) ne posent aucun problème : Sésame considère déjà tout le domaine enregistrable d'un site comme son périmètre. Un domaine vraiment différent, lui, doit être explicitement autorisé — Sésame ne remplit jamais un mot de passe sur un domaine que tu n'as pas approuvé.
+
+Trois façons de l'autoriser :
+
+1. **À l'avance**, quand tu le sais déjà : `sesame add expedia --url https://www.expediapartnercentral.com/ --extra-domain expediagroup.com`, ou passe `extraDomains: ["expediagroup.com"]` à `sesame_request_site`.
+2. **Apprentissage assisté** (le cas courant) : si `sesame_login` constate que l'onglet est parti vers un autre domaine enregistrable qui montre déjà un champ mot de passe, il n'abandonne **pas** simplement. Il te demande, sur ton Mac : *« expedia redirige vers accounts.expediagroup.com pour le mot de passe. Autoriser ce domaine pour ce site ? »* (Refuser par défaut). Dis oui une fois, et Sésame retient le domaine pour la prochaine fois **et** termine de remplir le formulaire tout de suite — pas besoin de rappeler `sesame_login`. Chaque autorisation (et chaque refus) est journalisée (`extra_domain`).
+3. **À la main**, dans la fenêtre « ajouter un site » de l'app de la barre des menus : un champ optionnel « Autres domaines de connexion », séparés par des virgules.
+
+Les domaines supplémentaires sont toujours validés de la même façon, quelle que soit leur origine : réduits à leur domaine enregistrable, jamais une adresse IP (sauf `127.0.0.1`/`localhost` pour les bancs d'essai), jamais un hébergeur mutualisé (`github.io`, `vercel.app`… où chaque sous-domaine appartient à quelqu'un d'autre), et jamais le domaine principal du site lui-même.
 
 ## Contrôler les accès un par un
 
@@ -172,7 +188,7 @@ Sésame parle **MCP**, le protocole ouvert des outils d'assistants, sur ses deux
 | Client | Transport | État |
 |---|---|---|
 | **Claude Code** (terminal et app Claude) | stdio | ✅ **Testé de bout en bout** : connexion réelle à un espace client EDF, dialogue d'autorisation, journal, attente du 2e facteur sur banc d'essai |
-| **Claude Desktop / Cowork** | stdio | ✅ **Testé** : `sesame install` déclare le serveur, les cinq outils apparaissent, appels journalisés sous le nom `cowork` |
+| **Claude Desktop / Cowork** | stdio | ✅ **Testé** : `sesame install` déclare le serveur, les sept outils apparaissent, appels journalisés sous le nom `cowork` |
 | **Client MCP officiel** (SDK TypeScript) | Streamable HTTP | ✅ **Testé** (`npm run check`) : jeton en en-tête ou dans l'URL, liste et appel d'outils, refus sans jeton |
 | Cursor, VS Code Copilot (mode agent), Windsurf | stdio | 🟡 Compatible par construction (même serveur stdio). Configuration fournie par `sesame install cursor\|vscode\|windsurf`. **Non testé.** |
 | Codex CLI (OpenAI), Gemini CLI (Google) | stdio | 🟡 Compatible par construction. `sesame install codex\|gemini`. **Non testé.** |
@@ -189,6 +205,7 @@ Voir toutes les configurations d'un coup : `sesame install print`.
 - Depuis la 0.5.1, la lecture du mot de passe passe par l'assistant Trousseau signé (`sesame-keychain`), qui crée lui-même chaque élément : aucune boîte de dialogue du Trousseau pour un site enregistré désormais. Un site enregistré avant la 0.5.1 appartient encore à l'ancien outil ; `sesame doctor` le signale et `sesame migrate-keychain` corrige (une fenêtre du Trousseau, clique **Autoriser**, une fois) — voir SECURITY.fr.md.
 - Un agent qui exécute du JavaScript dans le Chrome Sésame (Claude in Chrome installé dans ce profil) peut observer ce que Sésame tape dans la page. Sésame soumet toujours et vide le champ en cas d'échec, mais ne peut pas cacher le DOM à une extension que tu as installée. Voir SECURITY.fr.md.
 - Par l'extension, si Chrome cesse de répondre après la remise des identifiants, Sésame répond « l'extension n'a pas répondu : vérifie l'onglet » et ne réessaie **pas** dans le Chrome dédié (le formulaire a peut-être déjà été soumis).
+- Un parcours qui bascule vers un domaine que tu n'as jamais approuvé, et qui n'y montre *pas* déjà un mot de passe (un formulaire de connexion tout neuf, par exemple), se termine encore par un abandon simple — rien à proposer. Voir « Un domaine différent pour le mot de passe » plus haut.
 
 ## Dépannage
 

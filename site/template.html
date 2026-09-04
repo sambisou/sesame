@@ -291,18 +291,17 @@
 
   footer { padding: 48px 0 64px; color: var(--ink-3); font-size: .9rem; display: flex; justify-content: space-between; flex-wrap: wrap; gap: 16px; border-top: 1px solid var(--line); }
 
-  /* Nav : sélecteur de langue */
+  /* Nav : sélecteur de langue (EN | FR) */
   .nav-right { display: flex; align-items: center; gap: 18px; flex: none; }
-  .langselect {
-    font-family: inherit; font-size: .82rem; font-weight: 600; color: var(--ink-2);
-    background: var(--card); border: 1px solid var(--line); border-radius: 8px;
-    padding: 6px 10px; cursor: pointer; appearance: none;
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%237C746A' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
-    background-repeat: no-repeat; background-position: right 8px center; background-size: 14px;
-    padding-right: 26px;
+  .langlinks {
+    display: flex; align-items: center; gap: 8px;
+    font-size: .82rem; font-weight: 600; color: var(--ink-2); line-height: 1;
   }
-  .langselect:hover { border-color: var(--ink-3); }
-  .langselect:focus-visible { outline: 3px solid var(--seed); outline-offset: 2px; }
+  .langlinks a { color: var(--ink-2); text-decoration: none; }
+  .langlinks a:hover { color: var(--ink); }
+  .langlinks span[aria-current] { color: var(--ink); }
+  .langlinks span[aria-hidden] { color: var(--line); }
+  .langlinks a:focus-visible { outline: 3px solid var(--seed); outline-offset: 2px; border-radius: 4px; }
 
   /* Note : captures d'écran en français sur les pages traduites */
   .flow-lang-note {

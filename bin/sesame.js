@@ -9,7 +9,7 @@ import readline from "node:readline";
 import { fileURLToPath } from "node:url";
 import {
   HOME, SITES_FILE, JOURNAL_FILE, CHROME_PROFILE, CDP_URL, POLICIES, KEYCHAIN_SERVICE,
-  loadSites, saveSites, normalizeName, siteDomainFor, assertLoginUrl, ensureHome,
+  loadSites, saveSites, normalizeName, siteDomainFor, assertLoginUrl, ensureHome, validateExtraDomain,
 } from "../src/config.js";
 import {
   setSecret, deleteSecret, hasSecret, trustedAppsByAccount, trustedHelperInfo, keychainAvailable,
@@ -26,8 +26,12 @@ const HELP = `Sésame — coffre d'identifiants local pour Claude
 
 Usage : sesame <commande> [options]
 
-  add <site> [--url <url-de-connexion>] [--policy ask|always] [--user-sel <css>] [--pass-sel <css>] [--submit-sel <css>] [--code-sel <css>] [--note <texte>]
+  add <site> [--url <url-de-connexion>] [--policy ask|always] [--user-sel <css>] [--pass-sel <css>] [--submit-sel <css>] [--code-sel <css>] [--note <texte>] [--extra-domain <domaine>]…
                           Enregistre un site ; demande identifiant + mot de passe au clavier (masqué).
+                          --extra-domain (répétable) : autre domaine enregistrable où la connexion peut
+                          basculer (fournisseur d'identité séparé, ex. accounts.expediagroup.com pour
+                          expediapartnercentral.com) — sinon sesame_login le proposera lui-même la première
+                          fois (apprentissage assisté, avec ton accord).
   list                    Liste les sites, leur politique et leur dernière utilisation.
   policy <site> <ask|always|revoked>
                           Change la politique : ask = l'utilisateur valide à chaque fois (défaut),
@@ -81,6 +85,12 @@ async function main() {
 }
 
 function opt(name) { const i = args.indexOf(name); return i >= 0 ? args[i + 1] : undefined; }
+/** Toutes les valeurs d'une option répétable (ex. --extra-domain a --extra-domain b). */
+function optAll(name) {
+  const out = [];
+  for (let i = 0; i < args.length; i++) if (args[i] === name) out.push(args[i + 1]);
+  return out;
+}
 
 function prompt(question, { hidden = false } = {}) {
   if (!hidden) {
@@ -127,6 +137,14 @@ async function add() {
   assertPolicy(policyV);
   if (policyV === "revoked") throw new Error("Une politique « revoked » n'a pas de sens à la création.");
 
+  const extraDomainsRaw = optAll("--extra-domain");
+  const extraDomains = [];
+  for (const raw of extraDomainsRaw) {
+    const v = validateExtraDomain(domain, raw);
+    if (v.error) throw new Error(v.error);
+    if (!extraDomains.includes(v.domain)) extraDomains.push(v.domain);
+  }
+
   console.log(`\nIdentifiants pour « ${key} » (${domain}). Ils vont directement dans le Trousseau macOS ; Claude ne les verra jamais.`);
   const username = (await prompt("Identifiant / e-mail (vide si le site n'en demande pas) : ")).trim();
   const password = await prompt("Mot de passe : ", { hidden: true });
@@ -139,6 +157,7 @@ async function add() {
     domain,
     loginUrl: url,
     policy: policyV,
+    extraDomains: extraDomainsRaw.length ? extraDomains : existing.extraDomains,
     note: opt("--note") || existing.note,
     selectors: {
       username: opt("--user-sel") || existing.selectors?.username,

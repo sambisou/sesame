@@ -263,7 +263,7 @@ final class Store {
             if Date().timeIntervalSince(ts) > 600 { continue }
             shownRequests.insert(id)
             let r = SiteRequest(id: id, site: site, url: url, reason: o["reason"] as? String ?? "", note: o["note"] as? String,
-                                caller: o["caller"] as? String ?? "Claude", ts: ts)
+                                caller: o["caller"] as? String ?? "Claude", ts: ts, extraDomains: (o["extraDomains"] as? [String]) ?? [])
             Task { @MainActor in Windows.shared.showRequest(r, store: self) }
         }
     }
@@ -302,11 +302,11 @@ final class Store {
     }
 
     func setPolicy(_ key: String, _ policy: String) {
-        guard loadSites() else { lastError = "sites.json illisible : rien n'a été modifié."; return }
+        guard loadSites() else { lastError = t("err_sites_unreadable"); return }
         guard ["ask", "always", "revoked"].contains(policy), var s = raw[key] as? [String: Any] else { return }
         s["policy"] = policy; raw[key] = s
         do { try saveSites(); log(site: key, action: "policy", result: "ok", detail: policy); lastError = nil }
-        catch { lastError = "Impossible d'écrire sites.json : \(error.localizedDescription)" }
+        catch { lastError = t("err_sites_write_failed", error.localizedDescription) }
         loadSites()
     }
 
@@ -322,7 +322,7 @@ final class Store {
     }
 
     func removeSite(_ key: String) {
-        guard loadSites() else { lastError = "sites.json illisible : rien n'a été modifié."; return }
+        guard loadSites() else { lastError = t("err_sites_unreadable"); return }
         let had = security(["find-generic-password", "-s", service, "-a", key]).status == 0
         let delStatus: Int32
         if let helper = keychainHelperPath {
@@ -331,13 +331,13 @@ final class Store {
             delStatus = security(["delete-generic-password", "-s", service, "-a", key]).status
         }
         if had && delStatus != 0 {
-            lastError = "Le Trousseau a refusé de supprimer le secret de « \(key) » (code \(delStatus)). Le site est conservé."
+            lastError = t("err_keychain_delete_refused", key, "\(delStatus)")
             log(site: key, action: "remove_site", result: "échec", detail: "suppression Trousseau refusée (code \(delStatus))")
             return
         }
         raw.removeValue(forKey: key)
         do { try saveSites(); log(site: key, action: "remove_site", result: "ok", detail: had ? "site et secret supprimés" : "site supprimé (aucun secret)"); lastError = nil }
-        catch { lastError = "Impossible d'écrire sites.json : \(error.localizedDescription)" }
+        catch { lastError = t("err_sites_write_failed", error.localizedDescription) }
         loadSites()
     }
 
@@ -345,32 +345,32 @@ final class Store {
     /// embarqué dans ce bundle est présent, c'est lui qui crée l'élément (voir keychainHelperPath /
     /// runHelper) : l'élément lui appartient et il pourra le relire sans invite. Sinon, repli sur
     /// `security -T ""` (aucune application de confiance : chaque lecture demande).
-    func addSite(name: String, url: String, username: String, password: String, note: String) -> String? {
+    func addSite(name: String, url: String, username: String, password: String, note: String, extraDomains: [String] = []) -> String? {
         let key = Store.normalize(name)
-        guard !key.isEmpty, key.count <= 64, key.range(of: #"^[a-z0-9._-]+$"#, options: .regularExpression) != nil else { return "Donne un nom court au site (lettres, chiffres, tirets — ex. infomaniak)." }
-        guard let u = URL(string: url.trimmingCharacters(in: .whitespaces)), let host = u.host else { return "URL de la page de connexion invalide." }
+        guard !key.isEmpty, key.count <= 64, key.range(of: #"^[a-z0-9._-]+$"#, options: .regularExpression) != nil else { return t("err_name_invalid") }
+        guard let u = URL(string: url.trimmingCharacters(in: .whitespaces)), let host = u.host else { return t("err_url_invalid") }
         let local = ["127.0.0.1", "localhost"].contains(host)
-        guard u.scheme == "https" || (local && u.scheme == "http") else { return "La page de connexion doit être en https://." }
-        guard !password.isEmpty else { return "Le mot de passe est vide." }
-        guard loadSites() else { return "sites.json est illisible : rien n'a été modifié." }
+        guard u.scheme == "https" || (local && u.scheme == "http") else { return t("err_https_required") }
+        guard !password.isEmpty else { return t("err_password_empty") }
+        guard loadSites() else { return t("err_sites_unreadable") }
         let existing = raw[key] as? [String: Any]
         let domain = existing?["domain"] as? String ?? Store.siteDomain(for: host)
         let payload: [String: String] = ["username": username.trimmingCharacters(in: .whitespaces), "password": password]
-        guard let pd = try? JSONSerialization.data(withJSONObject: payload) else { return "Erreur interne." }
+        guard let pd = try? JSONSerialization.data(withJSONObject: payload) else { return t("err_internal") }
         let writeStatus: Int32
         if let helper = keychainHelperPath {
             writeStatus = runHelper(helper, ["set", service, key], stdin: pd)
         } else {
-            guard let ps = String(data: pd, encoding: .utf8) else { return "Erreur interne." }
+            guard let ps = String(data: pd, encoding: .utf8) else { return t("err_internal") }
             _ = security(["delete-generic-password", "-s", service, "-a", key])
             writeStatus = security(["add-generic-password", "-s", service, "-a", key, "-l", "Sésame — \(key)", "-D", "Identifiants Sésame (Claude)", "-T", "", "-w", ps]).status
         }
         guard writeStatus == 0 else {
             log(site: key, action: "add_site", result: "échec", detail: "écriture Trousseau (code \(writeStatus))")
-            return "Le Trousseau a refusé l'écriture (code \(writeStatus)). Est-il déverrouillé ?"
+            return t("err_keychain_write_refused", "\(writeStatus)")
         }
         // Le Trousseau a pris quelques centaines de ms : on repart du fichier tel qu'il est maintenant.
-        guard loadSites() else { return "Secret enregistré, mais sites.json est devenu illisible." }
+        guard loadSites() else { return t("err_saved_sites_unreadable") }
         let iso = ISO8601DateFormatter(); iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         var s: [String: Any] = (raw[key] as? [String: Any]) ?? existing ?? [:]
         s["domain"] = s["domain"] as? String ?? domain
@@ -379,8 +379,15 @@ final class Store {
         if !note.isEmpty { s["note"] = note }
         if s["selectors"] == nil { s["selectors"] = [String: String]() }
         if s["createdAt"] == nil { s["createdAt"] = iso.string(from: Date()) }
+        // Domaines supplémentaires (voir validateExtraDomain, src/config.js) : un champ non vide remplace
+        // la liste (valeurs invalides silencieusement écartées) ; laissé vide, on garde ce qui existait déjà.
+        if !extraDomains.isEmpty {
+            let mainDomain = s["domain"] as? String ?? domain
+            let cleaned = orderedUnique(extraDomains.compactMap { Store.validateExtraDomain(mainDomain: mainDomain, candidate: $0) })
+            if cleaned.isEmpty { s.removeValue(forKey: "extraDomains") } else { s["extraDomains"] = cleaned }
+        }
         raw[key] = s
-        do { try saveSites() } catch { return "Secret enregistré mais sites.json inaccessible : \(error.localizedDescription)" }
+        do { try saveSites() } catch { return t("err_saved_sites_write_failed", error.localizedDescription) }
         log(site: key, action: existing == nil ? "add_site" : "update_site", result: "ok", detail: "\(s["domain"] ?? domain), politique \(s["policy"] ?? "ask"), saisi dans l'app Sésame")
         loadSites()
         lastError = nil
@@ -389,13 +396,13 @@ final class Store {
 
     func openChrome() {
         let chrome = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
-        guard FileManager.default.fileExists(atPath: chrome) else { lastError = "Google Chrome n'est pas dans /Applications."; return }
+        guard FileManager.default.fileExists(atPath: chrome) else { lastError = t("err_no_chrome"); return }
         let p = Process()
         p.executableURL = URL(fileURLWithPath: chrome)
         p.arguments = ["--remote-debugging-port=9222", "--user-data-dir=\(chromeProfile.path)", "--no-first-run", "--no-default-browser-check", "--password-store=basic", "about:blank"]
         p.standardOutput = nil; p.standardError = nil
         do { try p.run(); log(site: nil, action: "chrome_start", result: "ok", detail: "port 9222, depuis l'app Sésame") }
-        catch { lastError = "Impossible de lancer Chrome : \(error.localizedDescription)" }
+        catch { lastError = t("err_chrome_launch_failed", error.localizedDescription) }
         DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in self?.checkChrome() }
     }
 
@@ -463,5 +470,28 @@ final class Store {
         let last2 = parts.suffix(2).joined(separator: "."), last3 = parts.suffix(3).joined(separator: ".")
         if sharedSuffixes.contains(last2) || sharedSuffixes.contains(last3) { return h }
         return twoLevelSuffixes.contains(last2) ? last3 : last2
+    }
+
+    /// Même règle que validateExtraDomain (src/config.js) : domaine enregistrable distinct du domaine
+    /// principal, jamais un hébergeur mutualisé, jamais une IP (sauf hôte local). Accepte un domaine nu ou
+    /// une URL/hôte. Renvoie nil si refusé (silencieusement écarté par addSite : pas de canal d'erreur par
+    /// domaine dans le champ « séparés par des virgules »).
+    static func validateExtraDomain(mainDomain: String, candidate: String) -> String? {
+        var raw = candidate.trimmingCharacters(in: .whitespaces).lowercased()
+        guard !raw.isEmpty else { return nil }
+        if let r = raw.range(of: #"^https?://"#, options: .regularExpression) { raw.removeSubrange(r) }
+        if let r = raw.range(of: #"/.*$"#, options: .regularExpression) { raw.removeSubrange(r) }
+        guard !raw.isEmpty else { return nil }
+        let domain = siteDomain(for: raw)
+        if domain.range(of: #"^\d+\.\d+\.\d+\.\d+$"#, options: .regularExpression) != nil, domain != "127.0.0.1" { return nil }
+        if domain == mainDomain { return nil }
+        if sharedSuffixes.contains(domain) { return nil }
+        return domain
+    }
+
+    private func orderedUnique(_ arr: [String]) -> [String] {
+        var seen = Set<String>(); var out: [String] = []
+        for x in arr where !seen.contains(x) { seen.insert(x); out.append(x) }
+        return out
     }
 }

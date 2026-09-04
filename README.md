@@ -27,7 +27,8 @@ The idea: Claude never asks *"give me your EDF password"*. It asks Sésame *"fil
 | `sesame_list_sites` | lists known sites | names, domains, policies — **no secret** |
 | `sesame_login` | fills in (and submits) the login form in Chrome, waits for a second-factor code if the site asks for one | `ok / refused / failed` + steps + URL |
 | `sesame_wait_code` | resumes waiting for a second-factor code you type yourself | `ok / failed` |
-| `sesame_request_site` | when a site is not registered yet: opens Sésame windows on the Mac so **you** type the username and password (straight to the Keychain) | `registered / refused / already known` — never the values |
+| `sesame_request_site` | when a site is not registered yet: opens a Sésame window on the Mac so **you** type the username and password (straight to the Keychain) — **non-blocking**: it returns right away with `status: "attente"` and a `requestId` | `attente` + `requestId` — never the values |
+| `sesame_request_status` | follows up on a `sesame_request_site` request, without ever blocking | `attente / enregistré / refusé / expiré` |
 | `sesame_open_login` | opens a site's login page | URL |
 | `sesame_journal` | reads the access log | events |
 
@@ -73,13 +74,13 @@ An alternative to the dedicated Chrome above: a **browser extension** that runs 
    sesame install extension --id <that-id>
    ```
    This writes the native-messaging manifest (mode 0600) for Chrome only. Using Brave, Arc, Chromium or Chrome Canary instead? Add `--browser brave|arc|chromium|canary`: the manifest is written for that one browser, never for browsers where the extension isn't loaded.
-6. Reload the extension (the ↻ button on its card), open its popup, and click **Test the connection**.
+6. Reload the extension (the ↻ button on its card), open its popup, and click **Test connection**.
 
 If the popup says *Native host has exited* right after that, and this folder lives in `~/Downloads`, `~/Documents` or `~/Desktop`, macOS is probably refusing to let Chrome run `bin/sesame-bridge.sh` from there (a process started by Chrome has Chrome's file permissions): allow Chrome for that folder in *System Settings → Privacy & Security → Files and Folders*, or move the repo elsewhere (e.g. `~/sesame`) and run step 5 again. Chrome reads the manifest from its own data folder (`~/Library/Application Support/Google/Chrome/NativeMessagingHosts` for the regular profile), which is where step 5 writes it.
 
 `sesame doctor` reports its status: manifest present, bridge reachable, extension connected. When all three are green, `sesame_login` and `sesame_wait_code` use the extension automatically instead of the dedicated Chrome — you keep browsing normally. Force one or the other with `SESAME_BROWSER=chrome-profile` or `SESAME_BROWSER=extension` (default `auto`).
 
-A login through the extension happens in two steps: Sésame first asks the extension to find (or open) the site's tab and check that a login form is visible; only then does it read the Keychain and send the credentials, for that tab, within 60 seconds. The access dialog names where the credentials will be typed ("your regular Chrome (Sésame extension)" or "the Sésame Chrome"). If the extension fails **before** the credentials were sent (bridge gone, Chrome closed during the first step), Sésame falls back to the dedicated Chrome in `auto` mode and says so in `steps`. If it stops answering **after** they were sent, there is **no fallback**: the answer says "the extension did not respond; the form may have been submitted — check the tab", and the journal records the attempt as *uncertain*. Credentials are never typed twice in two browsers.
+A login through the extension happens in two steps: Sésame first asks the extension to find (or open) the site's tab and check that a login form is visible; only then does it read the Keychain and send the credentials, for that tab, within 60 seconds. The access dialog names where the credentials will be typed ("your everyday Chrome (Sésame extension)" or "the Sésame Chrome"). If the extension fails **before** the credentials were sent (bridge gone, Chrome closed during the first step), Sésame falls back to the dedicated Chrome in `auto` mode and says so in `steps`. If it stops answering **after** they were sent, there is **no fallback**: the answer says "the extension did not respond; the form may have been submitted — check the tab", and the journal records the attempt as *uncertain*. Credentials are never typed twice in two browsers.
 
 **Honest limitation:** the extension fills the form inside your everyday Chrome, where you may have other extensions installed. Any extension with access to that page's DOM can, in principle, observe what gets typed there — the same way it could observe you typing it yourself. The dedicated Chrome above doesn't have this exposure, because nothing else is installed in that profile. Pick whichever trade-off suits you; see [SECURITY.md](SECURITY.md) for the details.
 
@@ -87,11 +88,11 @@ A login through the extension happens in two steps: Sésame first asks the exten
 
 `Install Sesame.command` also installs **Sésame.app** in the menu bar (a small seed icon). Everything can be done from there, without a terminal:
 
-- see every registered site and change its rule with one click: **Me demander** (ask), **Automatique**, **Coupé** (revoked);
+- see every registered site and change its rule with one click: **Ask me**, **Automatic**, **Off** (revoked);
 - add a site: one window with username, password and an eye button to reveal it; the secret goes straight to the Keychain;
 - delete a site (and its secret), flip the global **Block**, open the Sésame Chrome, read the last journal lines.
 
-When Claude needs a site that is not registered yet, the app opens that same window for you (`sesame_request_site`). If the app is not running, Sésame falls back to macOS dialogs.
+When Claude needs a site that is not registered yet, the app opens that same window for you (`sesame_request_site`, non-blocking — see below); the window also has an optional "other login domains" field, pre-filled when Claude already knows one is needed. If the app is not running, Sésame falls back to macOS dialogs.
 
 Build it yourself: `cd macos && ./scripts/make-app.sh release` (Swift 6, macOS 14+), the bundle lands in `macos/build/Sésame.app`.
 
@@ -114,10 +115,23 @@ Useful options:
 | `--submit-sel 'button.login'` | same for the submit button |
 | `--code-sel '#otp'` | same for the second-factor code field |
 | `--note "work account"` | memo shown by `sesame list` |
+| `--extra-domain example.com` (repeatable) | another registerable domain the login flow may land on for the password (see below) |
 
 Running `sesame add edf` again on an existing site updates the secret (password change).
 
-**No terminal needed:** when Claude needs a site that is not registered yet, it calls `sesame_request_site`. Sésame opens three small windows on your Mac (confirm, username, password), stores everything in the Keychain, and Claude only learns that the site is now available.
+**No terminal needed:** when Claude needs a site that is not registered yet, it calls `sesame_request_site`. That call returns immediately (`status: "attente"`, a `requestId`) — it never blocks Claude waiting on you. Sésame opens one window on your Mac (username, password, and an optional "other login domains" field), stores everything in the Keychain, and Claude follows up with `sesame_request_status(requestId)` until it reads `enregistré` (registered), `refusé` (declined) or `expiré` (no answer within 10 minutes). If the app is not running, Sésame falls back to three short, blocking macOS dialogs instead.
+
+## A different domain for the password (identity providers)
+
+Some login flows hop to a **separate registerable domain** partway through — a distinct identity provider, not just a subdomain of the same site. Example: Expedia Partner Central asks for the e-mail on `www.expediapartnercentral.com`, but the password page is served from `accounts.expediagroup.com` — a different domain entirely. Ordinary subdomain hops (`login.example.com` → `app.example.com`) need nothing special: Sésame already treats a site's whole registerable domain as its scope. A genuinely different domain does need to be explicitly allowed — Sésame never fills a password on a domain you have not approved.
+
+Three ways to allow it:
+
+1. **Up front**, when you already know: `sesame add expedia --url https://www.expediapartnercentral.com/ --extra-domain expediagroup.com`, or pass `extraDomains: ["expediagroup.com"]` to `sesame_request_site`.
+2. **Assisted learning** (the common case): if `sesame_login` finds that the tab has moved to another registerable domain that is already showing a password field, it does **not** just give up. It asks you, on your Mac: *"expedia is redirecting to accounts.expediagroup.com for the password. Allow this domain for this site?"* (Deny by default). Say yes once, and Sésame both remembers the domain for next time **and** finishes filling the form right away — no need to call `sesame_login` again. Every approval (and refusal) is logged (`extra_domain`).
+3. **By hand**, in the menu bar app's "add a site" window: an optional "Other domains" field, comma-separated.
+
+Extra domains are always validated the same way, wherever they come from: reduced to their registerable domain, never an IP address (except `127.0.0.1`/`localhost` for test benches), never a shared host (`github.io`, `vercel.app`…, where every subdomain belongs to someone else), and never the site's own main domain.
 
 ## Control access, site by site
 
@@ -141,9 +155,9 @@ Each line of `~/.sesame/journal.jsonl` records: timestamp, site, action (`login`
 
 ## One window, and only if you want it
 
-Sésame's first principle is to automate: for a site set to **Automatique**, nothing is shown, the login just happens. So there is only **one** window to know about, and it only appears for a site set to **Me demander** (ask):
+Sésame's first principle is to automate: for a site set to **Automatic**, nothing is shown, the login just happens. So there is only **one** window to know about, and it only appears for a site set to **Ask me**:
 
-1. **Sésame — demande d'accès.** Who is asking (Cowork, Claude Code…), which site, and why. *Refuser* is the default; click **Autoriser** to let Sésame fill the form.
+1. **Sésame — access request.** Who is asking (Cowork, Claude Code…), which site, and why. *Deny* is the default; click **Allow** to let Sésame fill the form.
 
 The macOS Keychain asks nothing at all for sites registered since 0.5.1: the signed **Keychain assistant** (`sesame-keychain`, shipped inside Sésame.app) both creates and reads back each item itself, which makes it silent from the very first access — no dialog, ever, and no "Always Allow" to click. The one exception is a site registered before 0.5.1, whose item still belongs to the old tool. `sesame doctor` tells you which; fix them all at once with `sesame migrate-keychain` — one Keychain window per site (click **Allow**), once, then it's settled for good. Full details and guarantees: [SECURITY.md](SECURITY.md).
 
@@ -177,7 +191,7 @@ Sésame speaks **MCP**, the open protocol for assistant tools, over both standar
 | Client | Transport | Status |
 |---|---|---|
 | **Claude Code** (terminal and Claude app) | stdio | ✅ **Tested end to end**: real login to an EDF customer account, approval dialog, journal, second-factor wait on a test bench |
-| **Claude Desktop / Cowork** | stdio | ✅ **Tested**: `sesame install` registers the server, the five tools show up, calls logged under the `cowork` caller |
+| **Claude Desktop / Cowork** | stdio | ✅ **Tested**: `sesame install` registers the server, the seven tools show up, calls logged under the `cowork` caller |
 | **Official MCP client** (TypeScript SDK) | Streamable HTTP | ✅ **Tested** (`npm run check`): token in header or in URL, tool listing and calls, refusal without token |
 | Cursor, VS Code Copilot (agent mode), Windsurf | stdio | 🟡 Compatible by construction (same stdio server). Config printed by `sesame install cursor\|vscode\|windsurf`. **Not tested.** |
 | Codex CLI (OpenAI), Gemini CLI (Google) | stdio | 🟡 Compatible by construction. `sesame install codex\|gemini`. **Not tested.** |
@@ -194,6 +208,7 @@ Print every configuration at once: `sesame install print`.
 - Since 0.5.1, the password read goes through the signed Keychain assistant (`sesame-keychain`), which creates each item itself: no Keychain dialog at all for a site registered from now on. A site registered before 0.5.1 still belongs to the old tool; `sesame doctor` flags it and `sesame migrate-keychain` fixes it (one Keychain window, click **Allow**, once) — see SECURITY.md.
 - An agent running JavaScript in the Sésame Chrome (Claude in Chrome installed there) can observe what Sésame types into the page. Sésame always submits and clears the field on failure, but cannot hide the DOM from an extension you installed. See SECURITY.md.
 - Through the extension, if Chrome stops answering after the credentials were handed over, Sésame reports "the extension did not respond: check the tab" and does **not** retry in the dedicated Chrome (the form may already have been submitted).
+- A login flow that hops to a domain you have never approved, and that is *not* already showing a password field there (a fresh login form, say), still ends in a plain abandon — nothing to learn from. See "A different domain for the password" above.
 
 ## Troubleshooting
 
@@ -226,4 +241,4 @@ npm run test:extension  # end to end through the Chrome extension: temporary Chr
 npm run pack         # builds sesame-macos.zip for a release
 ```
 
-Language note: the product, its dialogs and its journal speak French, because that is where it was born. Contributions to add English strings are welcome.
+Language note: the menu bar app, its windows, the macOS dialogs, notifications and the code-waiting banner follow the Mac's language — English by default, French if the system language is French. The CLI stays French (command names are unaffected either way), and the journal (`~/.sesame/journal.jsonl`) and the values Claude sees (`reason`, `steps`, `message`…) are always French: they are data for the model and for cross-tool consistency, not UI text.

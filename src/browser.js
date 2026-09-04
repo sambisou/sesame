@@ -3,7 +3,8 @@
 import fs from "node:fs";
 import { spawn, execFileSync } from "node:child_process";
 import { chromium } from "playwright-core";
-import { CDP_URL, CHROME_PROFILE, siteMatchesUrl, hostnameOf } from "./config.js";
+import { CDP_URL, CHROME_PROFILE, siteMatchesUrl, hostnameOf, siteDomainFor } from "./config.js";
+import { t } from "./i18n.js";
 
 // Champs de recherche et assimilés : jamais un identifiant.
 const NOT_SEARCH = ':not([type="search"]):not([role="searchbox"]):not([name*="search" i]):not([id*="search" i]):not([name*="recherche" i]):not([id*="recherche" i]):not([name="q"]):not([placeholder*="recherch" i]):not([placeholder*="search" i])';
@@ -170,9 +171,12 @@ export function onSite(page, site, frame) {
 export async function findPage(browser, site) {
   const pages = allPages(browser).filter(p => siteMatchesUrl(site, p.url()));
   if (pages.length === 0) return null;
-  // On préfère un onglet qui montre un champ mot de passe, puis un champ identifiant plausible.
+  // On préfère un onglet qui montre un champ mot de passe, puis un champ identifiant plausible, puis un
+  // onglet déjà à l'étape code (2e facteur) : utile à sesame_wait_code même si fillLogin n'a pas été
+  // appelé dans cette même session (l'onglet peut être sur un extraDomain, siteMatchesUrl les couvre déjà).
   for (const p of pages.slice().reverse()) if (await firstVisible(p, PASS_SELECTORS)) return p;
   for (const p of pages.slice().reverse()) if (await locateUser(p, site)) return p;
+  for (const p of pages.slice().reverse()) if (await detectSecondFactor(p, site)) return p;
   return pages[pages.length - 1];
 }
 
@@ -284,6 +288,31 @@ async function waitPasswordGone(page, site, ms) {
   return false;
 }
 
+/** Champ mot de passe visible dans UNE frame donnée (pas de recherche globale) : sélecteur du site, ou générique. */
+async function passInFrame(page, site, frame) {
+  const sels = site.selectors?.password ? [site.selectors.password] : PASS_SELECTORS;
+  const el = await firstVisible(page, sels, frame);
+  return el ? { el, frame } : null;
+}
+
+/**
+ * L'onglet est parti hors périmètre : la page où il se trouve montre-t-elle déjà un mot de passe, en
+ * https (ou http sur un hôte local, bancs d'essai), sur sa frame principale ? Si oui, renvoie le domaine
+ * enregistrable candidat (siteDomainFor) ; sinon null. Jamais restreint au site visé : c'est justement
+ * parce que la page n'y correspond plus qu'on cherche à savoir si un nouveau domaine mérite d'être proposé.
+ */
+async function detectNeedsDomain(page) {
+  if (page.isClosed()) return null;
+  const url = page.url();
+  let u;
+  try { u = new URL(url); } catch { return null; }
+  const local = ["127.0.0.1", "localhost", "::1"].includes(u.hostname);
+  if (u.protocol !== "https:" && !(local && u.protocol === "http:")) return null;
+  const pwd = await firstVisible(page, PASS_SELECTORS); // frame principale seulement
+  if (!pwd) return null;
+  return siteDomainFor(url);
+}
+
 async function isSearchLike(el) {
   return el.evaluate(e => {
     const s = [e.type, e.name, e.id, e.placeholder, e.getAttribute("role"), e.getAttribute("aria-label"), e.autocomplete].join(" ").toLowerCase();
@@ -349,13 +378,13 @@ async function hideBanner(page) {
 export async function waitForSecondFactor(page, site, { timeoutSec = 180, message, onTick } = {}) {
   const started = Date.now();
   const deadline = started + timeoutSec * 1000;
-  const banner = message || `Sésame attend que vous saisissiez le code reçu par e-mail, SMS ou application. La connexion reprendra toute seule dès que le site l'aura accepté (encore ${timeoutSec} s).`;
+  const banner = remaining => message || t("banner_wait_code", { remaining });
   const elapsed = () => Math.round((Date.now() - started) / 1000);
   let clear = 0;
   await setWindowState(page, "normal");      // dépliée si elle était réduite
   await page.bringToFront().catch(() => {}); // ici, oui : l'utilisateur doit taper le code
   activateChrome();
-  await showBanner(page, banner);
+  await showBanner(page, banner(timeoutSec));
   while (Date.now() < deadline) {
     if (page.isClosed()) return { done: false, elapsedSec: elapsed(), reason: "onglet fermé pendant l'attente du code" };
     if (!siteMatchesUrl(site, page.url())) return { done: false, elapsedSec: elapsed(), reason: `onglet parti vers ${publicUrl(page.url())}` };
@@ -369,7 +398,7 @@ export async function waitForSecondFactor(page, site, { timeoutSec = 180, messag
       return { done: true, elapsedSec: elapsed() };
     }
     if (onTick) { try { await onTick(remaining); } catch {} }
-    await showBanner(page, banner.replace(/encore \d+ s/, `encore ${remaining} s`));
+    await showBanner(page, banner(remaining));
     await page.waitForTimeout(1000);
   }
   await hideBanner(page);
@@ -392,7 +421,21 @@ export async function fillLogin(page, site, secret, { submitForm = true, waitSec
   const steps = [];
   const where = frame => (frame && frame !== page.mainFrame() ? ` (iframe ${publicUrl(frame.url())})` : "");
   const gone = hostname => ({ ok: false, steps, url: publicUrl(page.isClosed() ? "" : page.url()), reason: `onglet parti vers ${hostname || "une autre page"} : remplissage abandonné` });
-  const bail = () => gone(page.isClosed() ? "(onglet fermé)" : publicUrl(page.url()));
+  /**
+   * Abandon parce que l'onglet est parti hors périmètre : apprentissage assisté. Si la nouvelle page
+   * (frame principale, https) montre déjà un champ mot de passe, on ne se contente pas d'abandonner :
+   * on renvoie le domaine enregistrable candidat pour que src/login.js propose de l'autoriser (jamais
+   * d'ajout automatique). Sinon, abandon classique.
+   */
+  const bail = async () => {
+    if (!page.isClosed()) {
+      const nd = await detectNeedsDomain(page);
+      if (nd && nd !== site.domain) {
+        return { ok: false, steps, url: publicUrl(page.url()), needsDomain: nd, reason: `onglet parti vers ${nd} pour le mot de passe : domaine à autoriser ?` };
+      }
+    }
+    return gone(page.isClosed() ? "(onglet fermé)" : publicUrl(page.url()));
+  };
 
   // Pas de passage au premier plan : la connexion se fait en arrière-plan, Chrome ne vient devant que pour un code.
   await page.waitForLoadState("domcontentloaded", { timeout: 10000 }).catch(() => {});
@@ -411,25 +454,37 @@ export async function fillLogin(page, site, secret, { submitForm = true, waitSec
   }
 
   if (user) {
-    if (!onSite(page, site, user.frame)) return bail();
+    if (!onSite(page, site, user.frame)) return await bail();
     await typeInto(user.el, secret.username);
     steps.push(`identifiant rempli${where(user.frame)}`);
+    if (!pass) {
+      // Un champ mot de passe visible dans la MÊME frame doit être rempli AVANT tout clic (sinon un rendu
+      // tardif après hydratation ferait cliquer « Suivant » à tort, sautant le mot de passe — cas Yealink).
+      // S'il n'apparaît pas tout de suite, on attend 1 s et on relocalise avant de conclure à une connexion
+      // en deux étapes.
+      pass = await passInFrame(page, site, user.frame);
+      if (!pass) {
+        await page.waitForTimeout(1000);
+        if (!onSite(page, site, user.frame)) return await bail();
+        pass = await passInFrame(page, site, user.frame);
+      }
+    }
   }
 
   if (!pass && user) {
-    // Connexion en deux étapes : on valide l'identifiant et on attend le mot de passe.
+    // Connexion en deux étapes confirmée : on valide l'identifiant et on attend le mot de passe.
     const how = await submit(page, site, user.el);
     steps.push(`étape 1 validée (${how})`);
     await page.waitForLoadState("domcontentloaded", { timeout: 15000 }).catch(() => {});
     for (let i = 0; i < 20 && !pass; i++) {
       await page.waitForTimeout(500);
-      if (page.isClosed() || !siteMatchesUrl(site, page.url())) return bail();
+      if (page.isClosed() || !siteMatchesUrl(site, page.url())) return await bail();
       pass = await locate(page, site, site.selectors?.password, PASS_SELECTORS);
     }
     if (!pass) return { ok: false, steps, url: publicUrl(page.url()), reason: "Le champ mot de passe n'est pas apparu après l'identifiant (captcha, code SMS, ou sélecteur à préciser)." };
   }
 
-  if (!onSite(page, site, pass.frame)) return bail();
+  if (!onSite(page, site, pass.frame)) return await bail();
   await typeInto(pass.el, secret.password);
   steps.push(`mot de passe rempli${where(pass.frame)}`);
 

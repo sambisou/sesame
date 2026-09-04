@@ -1,0 +1,54 @@
+{
+  "extName": { "message": "Sésame" },
+  "extDescription": { "message": "Fills in your sign-in forms at the request of the Sésame server installed on your Mac. Nothing ever leaves your computer." },
+
+  "statusTitleUnknown": { "message": "Unknown status" },
+  "statusDetailQuerying": { "message": "Querying the service worker…" },
+
+  "testButton": { "message": "Test connection" },
+  "testButtonRunning": { "message": "Testing…" },
+  "copyButton": { "message": "Copy ID" },
+  "copyButtonTitle": { "message": "Copy the extension ID" },
+  "copyButtonCopied": { "message": "Copied" },
+  "copyButtonFailed": { "message": "Failed" },
+
+  "idLabelPre": { "message": "ID of this extension (for" },
+  "idLabelPost": { "message": ")" },
+
+  "swUnreachableTitle": { "message": "Service worker unreachable" },
+  "swUnreachableDetail": { "message": "Reload the extension from chrome://extensions." },
+
+  "bridgeConnectedTitle": { "message": "Native bridge connected" },
+  "bridgeConnectedHint": { "message": "The Sésame server (sesame_login) will use this extension to fill in forms in this Chrome." },
+  "detailBusySuffix": { "message": " — filling in progress" },
+  "detailLastExchange": {
+    "message": " · last exchange $time$",
+    "placeholders": { "time": { "content": "$1" } }
+  },
+  "testSuccess": { "message": "Test succeeded: Chrome started the bridge and it responded." },
+
+  "bridgeUnreachableTitle": { "message": "Native bridge unreachable" },
+  "noAttempt": { "message": "No successful attempt yet." },
+  "fallbackHint": { "message": "Without a bridge, Sésame falls back to its own dedicated-profile Chrome." },
+
+  "adviceNotFound": { "message": "Native manifest missing: in a terminal, run `sesame install extension --id <ID below>`, then reload the extension." },
+  "adviceForbidden": { "message": "This extension's ID is not allowed by the native manifest: rerun `sesame install extension --id <ID below>`, then reload the extension." },
+  "adviceExited": { "message": "The bridge stopped (Node not found? another bridge already running?). Check with `sesame doctor`." },
+
+  "sinceSeconds": { "message": "$n$s ago", "placeholders": { "n": { "content": "$1" } } },
+  "sinceMinutes": { "message": "$n$ min ago", "placeholders": { "n": { "content": "$1" } } },
+  "sinceHours": { "message": "$n$ h ago", "placeholders": { "n": { "content": "$1" } } },
+  "agoSeconds": { "message": "$n$s ago", "placeholders": { "n": { "content": "$1" } } },
+  "agoMinutes": { "message": "$n$ min ago", "placeholders": { "n": { "content": "$1" } } },
+  "agoHours": { "message": "$n$ h ago", "placeholders": { "n": { "content": "$1" } } },
+
+  "notifCodeTitle": { "message": "Sésame is waiting for your code" },
+  "notifCodeMessage": {
+    "message": "$domain$ is asking for a verification code: type it in the site's tab. Sésame will wait up to $timeout$ s.",
+    "placeholders": { "domain": { "content": "$1" }, "timeout": { "content": "$2" } }
+  },
+  "bannerWaitCode": {
+    "message": "Sésame is waiting for you to enter the code you received by email, SMS, or app. The sign-in will continue automatically once the site accepts it ($remaining$s left).",
+    "placeholders": { "remaining": { "content": "$1" } }
+  }
+}

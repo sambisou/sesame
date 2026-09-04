@@ -2,6 +2,7 @@
 import fs from "node:fs";
 import { execFile } from "node:child_process";
 import { LOCK_FILE, POLICIES, ensureHome } from "./config.js";
+import { t } from "./i18n.js";
 
 export function isLocked() { return fs.existsSync(LOCK_FILE); }
 export function lock() { ensureHome(); fs.writeFileSync(LOCK_FILE, new Date().toISOString() + "\n"); }
@@ -15,7 +16,7 @@ export function assertPolicy(p) {
  * Affiche une boîte de dialogue macOS et attend la réponse de l'utilisateur.
  * Renvoie true si « Autoriser », false sinon (Refuser, fermeture, ou délai dépassé).
  */
-export function askHuman({ title, message, timeoutSec = 90, okLabel = "Autoriser", cancelLabel = "Refuser", defaultOk = false }) {
+export function askHuman({ title, message, timeoutSec = 90, okLabel = t("ok_authorize"), cancelLabel = t("cancel_refuse"), defaultOk = false }) {
   if (process.platform !== "darwin") return Promise.resolve(false);
   const esc = s => String(s).replace(/\\/g, "\\\\").replace(/"/g, '\\"');
   const script =
@@ -36,12 +37,13 @@ export function askHuman({ title, message, timeoutSec = 90, okLabel = "Autoriser
  * Renvoie la chaîne saisie, ou null si l'utilisateur annule / ne répond pas.
  * La valeur ne quitte jamais ce processus : elle sert au Trousseau, jamais à l'IA.
  */
-export function askText({ title, message, hidden = false, defaultAnswer = "", okLabel = "Continuer", timeoutSec = 180 }) {
+export function askText({ title, message, hidden = false, defaultAnswer = "", okLabel = t("ok_continue"), timeoutSec = 180 }) {
   if (process.platform !== "darwin") return Promise.resolve(null);
+  const cancelLabel = t("cancel_cancel");
   const esc = s => String(s).replace(/\\/g, "\\\\").replace(/"/g, '\\"');
   const script =
     `display dialog "${esc(message)}" with title "${esc(title)}" default answer "${esc(defaultAnswer)}" ` +
-    `${hidden ? "with hidden answer " : ""}buttons {"Annuler", "${esc(okLabel)}"} default button "${esc(okLabel)}" cancel button "Annuler" ` +
+    `${hidden ? "with hidden answer " : ""}buttons {"${esc(cancelLabel)}", "${esc(okLabel)}"} default button "${esc(okLabel)}" cancel button "${esc(cancelLabel)}" ` +
     `with icon note giving up after ${timeoutSec}`;
   return new Promise(resolve => {
     execFile("/usr/bin/osascript", ["-e", script], { timeout: (timeoutSec + 5) * 1000, maxBuffer: 1 << 20 }, (err, stdout) => {
@@ -56,7 +58,7 @@ export function askText({ title, message, hidden = false, defaultAnswer = "", ok
 
 /** Où l'utilisateur doit regarder, selon le canal : son Chrome habituel (extension) ou le Chrome Sésame (profil dédié). */
 export function channelLabel(channel) {
-  return channel === "extension" ? "votre Chrome habituel (extension Sésame)" : "le Chrome Sésame";
+  return channel === "extension" ? t("channel_extension") : t("channel_chrome_profile");
 }
 
 /**
@@ -66,8 +68,8 @@ export function channelLabel(channel) {
 export function notifyWaitingCode(siteKey, { detail = "", timeoutSec = 180, channel = "chrome-profile" } = {}) {
   const min = Math.max(1, Math.round(timeoutSec / 60));
   notify(
-    "Sésame — code demandé",
-    `${siteKey} demande un code de vérification${detail ? " (" + detail + ")" : ""}. Tapez le code reçu par e-mail, SMS ou application dans ${channelLabel(channel)}. J'attends jusqu'à ${min} min.`
+    t("notif_code_title"),
+    t("notif_code_message", { site: siteKey, detail: detail ? ` (${detail})` : "", channel: channelLabel(channel), min })
   );
 }
 

@@ -1,17 +1,57 @@
 // Orchestration d'une connexion : politique → validation → Chrome → remplissage → journal.
 import fs from "node:fs";
 import path from "node:path";
-import { HOME, getSite, loadSites, saveSites, normalizeName, siteDomainFor, assertLoginUrl } from "./config.js";
+import { HOME, getSite, loadSites, saveSites, normalizeName, siteDomainFor, assertLoginUrl, validateExtraDomain } from "./config.js";
 import { getSecret, hasSecret, setSecret, keychainAvailable } from "./keychain.js";
 import { logEvent } from "./journal.js";
 import { isLocked, askHuman, askText, notify, notifyWaitingCode, channelLabel } from "./policy.js";
 import { connect, findPage, openPage, fillLogin, detectSecondFactor, waitForSecondFactor, publicUrl, hasLoginFields, gotoLogin } from "./browser.js";
 import { browserMode, extensionReady, openBridgeSession, bridgeWaitCode } from "./bridge-client.js";
+import { t } from "./i18n.js";
 
 /** Étape ajoutée en tête de `steps` quand l'extension a lâché AVANT tout envoi de secret (mode auto). */
 export const FALLBACK_STEP = "extension injoignable, repli sur le Chrome Sésame";
 /** Réponse quand le secret est parti vers l'extension sans réponse : jamais de repli (le formulaire a peut-être été soumis). */
 export const UNSURE_MESSAGE = "L'extension Sésame n'a pas répondu : le formulaire a peut-être été rempli et soumis. Vérifie l'onglet dans ton Chrome habituel. Aucun repli sur le Chrome Sésame (les identifiants ne seront pas saisis deux fois).";
+
+/**
+ * Apprentissage assisté (jamais d'ajout automatique) : le remplissage vient d'être abandonné parce que
+ * l'onglet est parti sur `domain` pour le mot de passe (fillLogin / l'extension l'ont détecté). On demande
+ * à l'utilisateur, par une boîte de dialogue macOS, s'il autorise ce domaine pour ce site. Si oui :
+ * ajouté à extraDomains, sauvegardé dans sites.json, journalisé (« extra_domain », ok) et `site` est mis
+ * à jour EN PLACE (site.extraDomains) pour que l'appelant reprenne le remplissage sur la même page tout de
+ * suite. Si non (ou domaine déjà refusé par les garde-fous) : rien n'est changé, journalisé si refusé
+ * explicitement par l'utilisateur. Renvoie true si le remplissage peut reprendre.
+ */
+async function approveExtraDomain({ site, domain, base }) {
+  if (!domain) return false;
+  if (Array.isArray(site.extraDomains) && site.extraDomains.includes(domain)) return true; // déjà autorisé (reprise)
+  const v = validateExtraDomain(site.domain, domain);
+  if (v.error) {
+    logEvent({ ...base, action: "extra_domain", result: "échec", detail: `${domain} refusé : ${v.error}` });
+    return false;
+  }
+  const allowed = await askHuman({
+    title: t("dlg_new_domain_title"),
+    message: t("dlg_new_domain_message", { site: site.key, domain: v.domain }),
+  });
+  if (!allowed) {
+    logEvent({ ...base, action: "extra_domain", result: "refusé", detail: `domaine proposé : ${v.domain}` });
+    return false;
+  }
+  const sites = loadSites();
+  const cur = sites[site.key];
+  if (!cur) {
+    logEvent({ ...base, action: "extra_domain", result: "échec", detail: `site absent de sites.json : ${v.domain}` });
+    return false;
+  }
+  cur.extraDomains = Array.isArray(cur.extraDomains) ? cur.extraDomains.slice() : [];
+  if (!cur.extraDomains.includes(v.domain)) cur.extraDomains.push(v.domain);
+  saveSites(sites);
+  site.extraDomains = cur.extraDomains; // reprise immédiate, même processus
+  logEvent({ ...base, action: "extra_domain", result: "ok", detail: `domaine ajouté : ${v.domain}` });
+  return true;
+}
 
 /**
  * @param {object} o
@@ -29,7 +69,9 @@ export const UNSURE_MESSAGE = "L'extension Sésame n'a pas répondu : le formula
  * temps (prepare : onglet et formulaire trouvés ; puis lecture du Trousseau ; puis fill) ; sinon dans le Chrome
  * Sésame à profil dédié. En mode auto, le repli sur le Chrome Sésame n'a lieu que si l'extension a lâché AVANT
  * tout envoi de secret ; après l'envoi (« sent »), la réponse dit « incertain » et rien n'est rejoué. Un pont
- * non authentifié (un autre processus tient la socket) est refusé, sans repli.
+ * non authentifié (un autre processus tient la socket) est refusé, sans repli. Si l'onglet part vers un autre
+ * domaine enregistrable qui montre déjà un mot de passe, l'utilisateur est invité à l'autoriser (apprentissage
+ * assisté, voir approveExtraDomain) et le remplissage reprend tout seul en cas d'accord.
  */
 export async function login({ site: siteName, submit = true, openIfMissing = true, caller = "mcp", reason = "", waitForCode = true, codeTimeoutSec = 180, readSecret = getSecret }) {
   const site = getSite(siteName);
@@ -60,8 +102,12 @@ export async function login({ site: siteName, submit = true, openIfMissing = tru
 
   if (site.policy === "ask") {
     const allowed = await askHuman({
-      title: "Sésame — demande d'accès",
-      message: `Claude (${caller}) demande à se connecter à « ${site.key} » (${site.domain}).\n\n${reason ? "Motif : " + reason + "\n\n" : ""}Autoriser le remplissage des identifiants dans ${channelLabel(channel)} ?`,
+      title: t("dlg_access_title"),
+      message: t("dlg_access_message", {
+        caller, site: site.key, domain: site.domain,
+        reasonLine: reason ? `${t("reason_label")} : ${reason}\n\n` : "",
+        channel: channelLabel(channel),
+      }),
     });
     if (!allowed) {
       logEvent({ ...base, result: "refusé", detail: "refus ou absence de réponse de l'utilisateur" });
@@ -94,10 +140,32 @@ export async function login({ site: siteName, submit = true, openIfMissing = tru
         if (r.result) {
           res = r.result;
           if (prep.ready.steps.length && !res.steps.some(s => prep.ready.steps.includes(s))) res.steps = [...prep.ready.steps, ...res.steps];
+          // Apprentissage assisté : l'onglet est parti hors périmètre, mais un mot de passe attend déjà sur
+          // le nouveau domaine. Si l'utilisateur autorise, on reprend prepare → Trousseau → fill, tout de
+          // suite, sur la MÊME extension (le pont a déjà retrouvé l'onglet, désormais dans le périmètre).
+          if (!res.ok && res.needsDomain) {
+            const approved = await approveExtraDomain({ site, domain: res.needsDomain, base });
+            if (approved) {
+              const priorSteps = res.steps;
+              const prep2 = await prepareViaExtension(site);
+              if (prep2.ready && prep2.ready.ok) {
+                const r2 = await fillViaExtension(prep2.session, prep2.ready.jobId, secret, { submit, waitForCode, codeTimeoutSec });
+                if (r2.result) {
+                  res = r2.result;
+                  res.steps = [...priorSteps, ...(prep2.ready.steps || []), ...res.steps];
+                } else if (r2.code === "sent") {
+                  logEvent({ ...base, channel, result: "incertain", detail: `secret transmis à l'extension sans réponse (reprise après nouveau domaine) : ${r2.cause} (pas de repli)` });
+                  notify("Sésame", t("notif_ext_no_response", { site: site.key }));
+                  return { ok: false, uncertain: true, message: `${UNSURE_MESSAGE} (${r2.cause})`, steps: priorSteps, url: prep2.ready.url, channel };
+                }
+                // sinon : échec de canal à la reprise — on garde `res` (l'échec initial) tel quel, sans repli ici.
+              }
+            }
+          }
         } else if (r.code === "sent") {
           // Le secret est parti et la réponse n'est pas venue : le formulaire a peut-être été soumis. Jamais de repli.
           logEvent({ ...base, channel, result: "incertain", detail: `secret transmis à l'extension sans réponse : ${r.cause} (pas de repli)` });
-          notify("Sésame", `Connexion à ${site.key} : l'extension n'a pas répondu, vérifie l'onglet.`);
+          notify("Sésame", t("notif_ext_no_response", { site: site.key }));
           return { ok: false, uncertain: true, message: `${UNSURE_MESSAGE} (${r.cause})`, steps: prep.ready.steps, url: prep.ready.url, channel };
         } else {
           fail = r;
@@ -141,16 +209,22 @@ export async function login({ site: siteName, submit = true, openIfMissing = tru
       }
 
       secret = secret || readSecret(site.key);
-      res = await fillLogin(page, site, secret, {
-        submitForm: submit,
-        waitSecondFactor: waitForCode,
-        secondFactorTimeoutSec: codeTimeoutSec,
-        onSecondFactor: sf => {
-          logEvent({ ...base, action: "2fa", result: "attente", detail: `code demandé par le site (${sf.detail}) — l'utilisateur doit le saisir` });
-          notifyWaitingCode(site.key, { detail: sf.kind === "champ" ? "" : sf.detail, timeoutSec: codeTimeoutSec, channel: "chrome-profile" });
-        },
-      });
+      const onSecondFactor = sf => {
+        logEvent({ ...base, action: "2fa", result: "attente", detail: `code demandé par le site (${sf.detail}) — l'utilisateur doit le saisir` });
+        notifyWaitingCode(site.key, { detail: sf.kind === "champ" ? "" : sf.detail, timeoutSec: codeTimeoutSec, channel: "chrome-profile" });
+      };
+      res = await fillLogin(page, site, secret, { submitForm: submit, waitSecondFactor: waitForCode, secondFactorTimeoutSec: codeTimeoutSec, onSecondFactor });
       res.opened = opened;
+
+      // Apprentissage assisté : l'onglet est parti hors périmètre, mais un mot de passe attend déjà sur le
+      // nouveau domaine. Si l'utilisateur autorise, on reprend le remplissage sur LA MÊME page tout de suite.
+      if (!res.ok && res.needsDomain) {
+        const approved = await approveExtraDomain({ site, domain: res.needsDomain, base });
+        if (approved) {
+          res = await fillLogin(page, site, secret, { submitForm: submit, waitSecondFactor: waitForCode, secondFactorTimeoutSec: codeTimeoutSec, onSecondFactor });
+          res.opened = opened;
+        }
+      }
     } else {
       // Par l'extension, le « code demandé » n'est connu qu'au retour : on le journalise alors, et on ne
       // prévient l'utilisateur que si le code reste à saisir (sinon il l'a déjà tapé).
@@ -172,11 +246,11 @@ export async function login({ site: siteName, submit = true, openIfMissing = tru
     }
     if (!res.ok) {
       logEvent({ ...ev, result: "échec", detail: res.reason });
-      return { ok: false, message: res.reason, steps: res.steps, url: res.url, secondFactor: res.secondFactor, opened: res.opened, channel: channel === "extension" ? channel : undefined };
+      return { ok: false, message: res.reason, steps: res.steps, url: res.url, secondFactor: res.secondFactor, needsDomain: res.needsDomain, opened: res.opened, channel: channel === "extension" ? channel : undefined };
     }
     const certain = !res.hint && !res.secondFactor?.pending;
     logEvent({ ...ev, result: certain ? "réussi" : "incertain", detail: `${res.steps.join(", ")}${res.hint ? " — " + res.hint : ""} → ${res.url}` });
-    notify("Sésame", certain ? `Connexion à ${site.key} remplie pour Claude (${caller}).` : `Connexion à ${site.key} : à vérifier (${res.hint || "code attendu"}).`);
+    notify("Sésame", certain ? t("notif_login_filled", { site: site.key, caller }) : t("notif_login_check", { site: site.key, hint: res.hint || "code attendu" }));
     if (certain) touchLastUsed(site.key);
     return { ok: true, message: res.secondFactor?.pending ? `Identifiants remplis sur « ${site.key} », le site attend un code de l'utilisateur.` : `Identifiants remplis sur « ${site.key} ».`, steps: res.steps, url: res.url, title: res.title, secondFactor: res.secondFactor, hint: res.hint, opened: res.opened, channel: channel === "extension" ? channel : undefined };
   } catch (e) {
@@ -212,13 +286,18 @@ function normalizeResult(r) {
   if (o.secondFactor && typeof o.secondFactor === "object") {
     secondFactor = { pending: !!o.secondFactor.pending, kind: o.secondFactor.kind === "texte-seul" ? "texte-seul" : "champ", detail: str(o.secondFactor.detail, 120) || "" };
   }
+  const url = publicUrl(str(o.url, 500) || "");
+  // L'extension ne renvoie qu'un booléen (needsDomain:true) : le domaine enregistrable candidat se calcule
+  // ici, côté pont, à partir de l'URL déjà nettoyée — voir detectNeedsDomain (extension/background.js).
+  const needsDomain = o.needsDomain ? siteDomainFor(url) || undefined : undefined;
   return {
     ok: !!o.ok, steps,
-    url: publicUrl(str(o.url, 500) || ""),
+    url,
     title: str(o.title, 200) || "",
     secondFactor,
     hint: str(o.hint) || undefined,
     reason: str(o.reason) || (o.ok ? undefined : "l'extension a signalé un échec sans motif"),
+    needsDomain,
   };
 }
 
@@ -423,15 +502,28 @@ export async function waitCode({ site: siteName, timeoutSec = 180, caller = "mcp
  * @param {string} [o.reason] pourquoi Claude en a besoin (affiché)
  * @param {string} [o.note]   mémo (ex. « connexion en 2 étapes »)
  * @param {string} [o.caller]
+ * @param {string[]} [o.extraDomains] domaines supplémentaires (fournisseur d'identité sur un autre domaine
+ *   enregistrable, ex. Expedia : expediapartnercentral.com → expediagroup.com pour le mot de passe) ;
+ *   validés (siteDomainFor, pas d'IP sauf hôte local, pas dans SHARED_SUFFIXES, pas le domaine principal)
  * @param {object} [o.ui]     surcharge des dialogues pour les tests : { confirm, text }
  */
-export async function requestSite({ site: siteName, url, reason = "", note, caller = "mcp", replace = false, ui } = {}) {
+export async function requestSite({ site: siteName, url, reason = "", note, caller = "mcp", replace = false, extraDomains, ui } = {}) {
   const key = normalizeName(siteName || "");
   const base = { site: key || undefined, action: "request_site", caller };
   if (!key) return { ok: false, message: "Nom de site manquant (ex. « infomaniak »)." };
   try { assertLoginUrl(url); } catch (e) { return { ok: false, message: e.message }; }
   const domain = siteDomainFor(url);
   if (!domain) return { ok: false, message: `URL de connexion invalide : ${url || "(vide)"}.` };
+
+  const validExtraDomains = [];
+  if (Array.isArray(extraDomains)) {
+    for (const raw of extraDomains) {
+      const v = validateExtraDomain(domain, raw);
+      if (v.error) return { ok: false, message: `Domaine supplémentaire refusé : ${v.error}` };
+      if (!validExtraDomains.includes(v.domain)) validExtraDomains.push(v.domain);
+    }
+  }
+
   if (isLocked()) {
     logEvent({ ...base, result: "refusé", detail: "verrou global actif" });
     return { ok: false, message: "Sésame est verrouillé (sesame unlock pour rouvrir)." };
@@ -445,35 +537,40 @@ export async function requestSite({ site: siteName, url, reason = "", note, call
     return { ok: true, alreadyRegistered: true, site: key, domain: existing.domain, policy: existing.policy, message: `« ${key} » est déjà enregistré : appelle sesame_login.` };
   }
 
-  // Si l'app Sésame (barre des menus) tourne, c'est elle qui montre le formulaire : identifiant et mot de passe
-  // sur une seule fenêtre, œil pour afficher le mot de passe. Sinon, boîtes de dialogue macOS successives.
+  // Si l'app Sésame (barre des menus) tourne, c'est elle qui montre le formulaire : identifiant, mot de
+  // passe et domaines supplémentaires sur une seule fenêtre. Non bloquant : une demande est déposée et
+  // sesame_request_status permet de suivre sa réponse (voir requestViaBar) — jamais de seconde fenêtre
+  // pour le même site tant qu'une demande est « attente ». Sinon, boîtes de dialogue macOS, bloquantes
+  // mais courtes (elles restent synchrones : rien à interroger après coup).
   if (!ui && barAlive()) {
-    const r = await requestViaBar({ key, url, reason, note, caller, domain, existing, sites, base });
-    if (r) return r;
+    return requestViaBar({ key, url, reason, note, caller, domain, extraDomains: validExtraDomains, base });
   }
 
-  const confirm = ui?.confirm || (o => askHuman({ okLabel: "Enregistrer", cancelLabel: "Plus tard", defaultOk: true, timeoutSec: 300, ...o }));
+  const confirm = ui?.confirm || (o => askHuman({ okLabel: t("ok_register"), cancelLabel: t("cancel_later"), defaultOk: true, timeoutSec: 300, ...o }));
   const text = ui?.text || askText;
 
-  const intro = `Claude (${caller}) a besoin de se connecter à « ${key} » (${domain}).\n\n${reason ? "Motif : " + reason + "\n\n" : ""}Sésame va vous demander votre identifiant puis votre mot de passe pour ce site. Ils seront rangés dans le Trousseau macOS ; Claude ne les verra jamais.\n\nEnregistrer ce site maintenant ?`;
-  const go = await confirm({ title: "Sésame — nouveau site", message: intro });
+  const intro = t("dlg_new_site_message", {
+    caller, key, domain,
+    reasonLine: reason ? `${t("reason_label")} : ${reason}\n\n` : "",
+  });
+  const go = await confirm({ title: t("dlg_new_site_title"), message: intro });
   if (!go) {
     logEvent({ ...base, result: "refusé", detail: "l'utilisateur a refusé ou n'a pas répondu" });
     return { ok: false, refused: true, message: "L'utilisateur n'a pas souhaité enregistrer ce site maintenant." };
   }
 
-  const username = await text({ title: `Sésame — ${key} (1/3)`, message: `Identifiant ou e-mail pour ${domain} (laissez vide si le site n'en demande pas) :` });
+  const username = await text({ title: `Sésame — ${key} (1/3)`, message: t("dlg_username_message", { domain }) });
   if (username === null) { logEvent({ ...base, result: "refusé", detail: "annulé à l'identifiant" }); return { ok: false, refused: true, message: "Saisie annulée par l'utilisateur." }; }
 
   let password = null;
   for (let attempt = 0; attempt < 3; attempt++) {
-    const p1 = await text({ title: `Sésame — ${key} (2/3)`, message: `Mot de passe pour ${domain} (la frappe est masquée) :`, hidden: true });
+    const p1 = await text({ title: `Sésame — ${key} (2/3)`, message: t("dlg_password_message", { domain }), hidden: true });
     if (p1 === null) { logEvent({ ...base, result: "refusé", detail: "annulé au mot de passe" }); return { ok: false, refused: true, message: "Saisie annulée par l'utilisateur." }; }
     if (!p1) continue;
-    const p2 = await text({ title: `Sésame — ${key} (3/3)`, message: "Confirmez le mot de passe :", hidden: true, okLabel: "Enregistrer" });
+    const p2 = await text({ title: `Sésame — ${key} (3/3)`, message: t("dlg_confirm_password_message"), hidden: true, okLabel: t("ok_register") });
     if (p2 === null) { logEvent({ ...base, result: "refusé", detail: "annulé à la confirmation" }); return { ok: false, refused: true, message: "Saisie annulée par l'utilisateur." }; }
     if (p1 === p2) { password = p1; break; }
-    await confirm({ title: "Sésame", message: "Les deux saisies diffèrent. On recommence ?" });
+    await confirm({ title: "Sésame", message: t("dlg_password_mismatch_message") });
   }
   if (!password) { logEvent({ ...base, result: "échec", detail: "mot de passe vide ou non confirmé" }); return { ok: false, message: "Mot de passe non confirmé après trois essais." }; }
 
@@ -488,12 +585,13 @@ export async function requestSite({ site: siteName, url, reason = "", note, call
   // En cas de réenregistrement, on garde le domaine déjà réglé (parfois élargi à la main, ex. edf.fr).
   sites[key] = {
     domain: existing?.domain || domain, loginUrl: existing?.loginUrl || url, policy: existing?.policy || "ask",
+    extraDomains: validExtraDomains.length ? validExtraDomains : existing?.extraDomains,
     note: note || existing?.note, selectors: existing?.selectors || {},
     createdAt: existing?.createdAt || new Date().toISOString(), lastUsed: existing?.lastUsed,
   };
   saveSites(sites);
   logEvent({ ...base, result: "ok", detail: `${domain}, politique ${sites[key].policy}, saisi par l'utilisateur dans la fenêtre Sésame` });
-  notify("Sésame", `« ${key} » enregistré. Claude peut maintenant demander la connexion (avec votre accord à chaque fois).`);
+  notify("Sésame", t("notif_site_registered", { key }));
   return { ok: true, site: key, domain, policy: sites[key].policy, message: `« ${key} » enregistré par l'utilisateur. Appelle maintenant sesame_login(site: "${key}").` };
 }
 
@@ -505,50 +603,95 @@ function barAlive() {
   } catch { return false; }
 }
 
-/**
- * Dépose une demande pour l'app Sésame (~/.sesame/requests/<id>.json) et attend sa réponse
- * (<id>.done.json : saved | refused). L'app enregistre elle-même le secret dans le Trousseau.
- * Renvoie null si l'app ne répond pas (on retombe alors sur les boîtes de dialogue).
- */
-async function requestViaBar({ key, url, reason, note, caller, domain, base, timeoutSec = 300 }) {
+const REQUEST_MAX_AGE_MS = 600000; // 10 min : au-delà, une demande est considérée périmée (app disparue, oubliée)
+
+/** Dossier des demandes déposées pour l'app Sésame (~/.sesame/requests). */
+function requestsDir() {
   const dir = path.join(HOME, "requests");
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  return dir;
+}
+
+/** Une demande pour `key` est-elle déjà « attente » (déposée, pas encore de .done.json, pas périmée) ? Renvoie son id, sinon null. */
+function findPendingRequest(dir, key) {
+  let names;
+  try { names = fs.readdirSync(dir); } catch { return null; }
+  for (const n of names) {
+    if (!n.endsWith(".json") || n.endsWith(".done.json")) continue;
+    const id = n.slice(0, -".json".length);
+    if (!id.endsWith("-" + key)) continue;
+    if (fs.existsSync(path.join(dir, id + ".done.json"))) continue; // déjà répondu
+    let mtime;
+    try { mtime = fs.statSync(path.join(dir, n)).mtimeMs; } catch { continue; }
+    if (Date.now() - mtime > REQUEST_MAX_AGE_MS) continue; // périmée
+    return id;
+  }
+  return null;
+}
+
+/**
+ * Dépose une demande pour l'app Sésame (~/.sesame/requests/<id>.json) — identifiant, mot de passe et
+ * domaines supplémentaires, sur une seule fenêtre — et répond IMMÉDIATEMENT, sans attendre : la réponse
+ * se suit avec sesame_request_status(requestId). Si une demande pour ce site est déjà « attente », aucune
+ * seconde fenêtre : le requestId existant est renvoyé tel quel.
+ */
+function requestViaBar({ key, url, reason, note, caller, domain, extraDomains, base }) {
+  const dir = requestsDir();
+  const pending = findPendingRequest(dir, key);
+  if (pending) {
+    logEvent({ ...base, result: "attente", detail: `demande déjà en cours dans l'app Sésame (${pending})` });
+    return { ok: true, status: "attente", requestId: pending, message: "fenêtre ouverte sur le Mac ; interroge sesame_request_status" };
+  }
   const id = `${Date.now()}-${key}`;
   const file = path.join(dir, id + ".json");
-  const done = path.join(dir, id + ".done.json");
-  fs.writeFileSync(file, JSON.stringify({ id, site: key, url, reason, note, caller, ts: new Date().toISOString() }), { mode: 0o600 });
+  fs.writeFileSync(file, JSON.stringify({ id, site: key, url, reason, note, caller, extraDomains, ts: new Date().toISOString() }), { mode: 0o600 });
   logEvent({ ...base, result: "attente", detail: "formulaire ouvert dans l'app Sésame" });
-  const deadline = Date.now() + timeoutSec * 1000;
-  let status = null;
-  while (Date.now() < deadline) {
-    await new Promise(r => setTimeout(r, 700));
-    if (fs.existsSync(done)) {
-      try { status = JSON.parse(fs.readFileSync(done, "utf8")).status; } catch { status = "refused"; }
-      break;
+  return { ok: true, status: "attente", requestId: id, message: "fenêtre ouverte sur le Mac ; interroge sesame_request_status" };
+}
+
+/**
+ * Interroge l'état d'une demande sesame_request_site déposée pour l'app Sésame (jamais bloquant) :
+ * attente (fenêtre toujours ouverte), enregistré (l'utilisateur a validé, sesame_login peut suivre),
+ * refusé (« Plus tard », fermeture, ou app disparue), expiré (plus de 10 min sans réponse, ou identifiant
+ * inconnu / déjà traité). Nettoie les fichiers de la demande une fois la réponse consommée.
+ */
+export function requestStatus({ requestId, caller = "mcp" }) {
+  const id = String(requestId || "").trim();
+  if (!/^\d+-[a-z0-9._-]+$/.test(id)) return { ok: false, message: "requestId invalide (celui renvoyé par sesame_request_site)." };
+  const key = id.replace(/^\d+-/, "");
+  const base = { site: key, action: "request_status", caller };
+  const dir = requestsDir();
+  const file = path.join(dir, id + ".json");
+  const done = path.join(dir, id + ".done.json");
+
+  if (fs.existsSync(done)) {
+    let status = "refused";
+    try { status = JSON.parse(fs.readFileSync(done, "utf8")).status; } catch {}
+    try { fs.unlinkSync(file); } catch {}
+    try { fs.unlinkSync(done); } catch {}
+    if (status === "saved") {
+      const site = loadSites()[key];
+      if (site && hasSecret(key)) {
+        logEvent({ ...base, result: "ok", detail: `${site.domain}, politique ${site.policy}, saisi par l'utilisateur dans l'app Sésame` });
+        return { ok: true, status: "enregistré", site: key, domain: site.domain, policy: site.policy, message: `« ${key} » enregistré par l'utilisateur. Appelle maintenant sesame_login(site: "${key}").` };
+      }
+      logEvent({ ...base, result: "échec", detail: "l'app a répondu « saved » mais le site ou le secret manque" });
+      return { ok: false, status: "refusé", message: "L'enregistrement n'a pas abouti (secret absent). Réessaie." };
     }
-    if (Date.now() - deadline + timeoutSec * 1000 > 8000 && !barAlive()) break; // l'app a disparu : repli
+    logEvent({ ...base, result: "refusé", detail: "« Plus tard » (ou fermeture) dans l'app Sésame" });
+    return { ok: true, status: "refusé", message: "L'utilisateur n'a pas souhaité enregistrer ce site (ou n'a pas répondu)." };
   }
-  try { fs.unlinkSync(file); } catch {}
-  try { fs.unlinkSync(done); } catch {}
-  if (status === "saved") {
-    // L'app a écrit le Trousseau et sites.json ; on relit pour répondre juste.
-    const site = loadSites()[key];
-    if (site && hasSecret(key)) {
-      logEvent({ ...base, result: "ok", detail: `${site.domain}, politique ${site.policy}, saisi par l'utilisateur dans l'app Sésame` });
-      return { ok: true, site: key, domain: site.domain, policy: site.policy, message: `« ${key} » enregistré par l'utilisateur. Appelle maintenant sesame_login(site: "${key}").` };
-    }
-    logEvent({ ...base, result: "échec", detail: "l'app a répondu « saved » mais le site ou le secret manque" });
-    return { ok: false, message: "L'enregistrement n'a pas abouti (secret absent). Réessaie." };
+  if (!fs.existsSync(file)) {
+    return { ok: true, status: "expiré", message: "Aucune demande en cours pour cet identifiant (expirée, déjà traitée, ou jamais créée)." };
   }
-  if (status === "refused") {
-    logEvent({ ...base, result: "refusé", detail: "« Plus tard » dans l'app Sésame" });
-    return { ok: false, refused: true, message: "L'utilisateur n'a pas souhaité enregistrer ce site maintenant." };
+  let mtime = 0;
+  try { mtime = fs.statSync(file).mtimeMs; } catch {}
+  if (mtime && Date.now() - mtime > REQUEST_MAX_AGE_MS) {
+    try { fs.unlinkSync(file); } catch {}
+    logEvent({ ...base, result: "refusé", detail: `sans réponse dans l'app Sésame après ${Math.round(REQUEST_MAX_AGE_MS / 60000)} min` });
+    return { ok: true, status: "expiré", message: "La demande a expiré sans réponse (10 min)." };
   }
-  if (status === null && Date.now() >= deadline) {
-    logEvent({ ...base, result: "refusé", detail: `sans réponse dans l'app Sésame après ${timeoutSec} s` });
-    return { ok: false, refused: true, message: `L'utilisateur n'a pas répondu dans le délai (${timeoutSec} s).` };
-  }
-  return null; // l'app a disparu : boîtes de dialogue
+  return { ok: true, status: "attente", requestId: id, message: "En attente d'une réponse dans l'app Sésame." };
 }
 
 function touchLastUsed(key) {

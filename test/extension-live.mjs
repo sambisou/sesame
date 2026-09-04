@@ -145,7 +145,7 @@ try {
     return p;
   }
   const has = (steps, prefix) => assert.ok(steps.some(s => s.startsWith(prefix)), `étape « ${prefix} » absente : ${steps.join(" | ")}`);
-  const shape = r => assert.deepEqual(Object.keys(r).sort(), ["hint", "id", "ok", "reason", "secondFactor", "steps", "title", "type", "url"], "forme de « result »");
+  const shape = r => assert.deepEqual(Object.keys(r).sort(), ["hint", "id", "needsDomain", "ok", "reason", "secondFactor", "steps", "title", "type", "url"], "forme de « result »");
   const readyShape = r => assert.deepEqual(Object.keys(r).sort(), ["id", "jobId", "ok", "reason", "steps", "type", "url"], "forme de « ready »");
   /** Les deux temps, SUR LA MÊME connexion authentifiée : prepare (onglet + formulaire) puis fill (secret
    *  vers le jobId) — voir openBridgeSession dans src/bridge-client.js. La session est refermée après. */
@@ -229,6 +229,7 @@ try {
   const { r: r5 } = await prepareAndFill({ ...site, loginUrl: LOGIN + "?hop=1" }, SECRET, { submit: true, waitCode: true, codeTimeoutSec: 30 });
   shape(r5); noLeak(JSON.stringify(r5), "réponse fill (navigation hors domaine)");
   assert.equal(r5.ok, false, JSON.stringify(r5)); assert.match(r5.reason, /onglet parti vers http:\/\/localhost:\d+\/2fa-page\.html : remplissage abandonné/);
+  assert.equal(r5.needsDomain, false, "page fraîche sans mot de passe : pas d'apprentissage assisté proposé");
   has(r5.steps, "identifiant rempli"); assert.ok(!r5.steps.some(s => s.startsWith("mot de passe")), "mot de passe non tapé : " + r5.steps.join(" | "));
   const p5 = await benchPage(`http://localhost:${PORT}/`);
   assert.equal(new URL(p5.url()).searchParams.get("hopped"), "1");
@@ -236,6 +237,42 @@ try {
   assert.equal(await p5.locator("#email").inputValue(), "", "page fraîche sur l'autre hôte");
   results.push("5 navigation vers un autre hôte entre identifiant et mot de passe → abandon, rien tapé sur localhost");
   await p5.close();
+
+  // 5b) Fournisseur d'identité séparé (idp=1) : « Suivant » envoie sur localhost, qui affiche DIRECTEMENT le
+  //     mot de passe (cas Expedia). Sans extraDomains : apprentissage assisté détecté — needsDomain:true
+  //     (l'extension ne renvoie qu'un booléen ; le domaine enregistrable se calcule côté pont, src/login.js,
+  //     via siteDomainFor(url) — voir normalizeResult) — rien tapé.
+  const { r: r5b } = await prepareAndFill({ ...site, loginUrl: LOGIN + "?idp=1&no2fa=1" }, SECRET, { submit: true, waitCode: true, codeTimeoutSec: 30 });
+  shape(r5b); noLeak(JSON.stringify(r5b), "réponse fill (idp sans extraDomains)");
+  assert.equal(r5b.ok, false, JSON.stringify(r5b));
+  assert.equal(r5b.needsDomain, true, JSON.stringify(r5b));
+  has(r5b.steps, "identifiant rempli"); assert.ok(!r5b.steps.some(s => s.startsWith("mot de passe")), "mot de passe non tapé : " + r5b.steps.join(" | "));
+  const p5b = await benchPage(`http://localhost:${PORT}/2fa-page.html?step=pwd`);
+  assert.equal(await p5b.locator("#pwd").inputValue(), "", "aucun mot de passe tapé sur le nouveau domaine");
+  results.push("5b idp sans extraDomains → needsDomain (booléen côté extension), rien tapé");
+  await p5b.close();
+
+  // 5c) Même scénario, mais extraDomains:["localhost"] est déjà autorisé (comme après une approbation par
+  //     l'utilisateur — voir approveExtraDomain, src/login.js) : le remplissage se poursuit tout seul.
+  const { r: r5c } = await prepareAndFill({ ...site, loginUrl: LOGIN + "?idp=1&no2fa=1", extraDomains: ["localhost"] }, SECRET, { submit: true, waitCode: true, codeTimeoutSec: 30 });
+  shape(r5c); noLeak(JSON.stringify(r5c), "réponse fill (idp avec extraDomains)");
+  assert.equal(r5c.ok, true, JSON.stringify(r5c));
+  has(r5c.steps, "mot de passe rempli");
+  const p5c = await benchPage(`http://localhost:${PORT}/2fa-page.html?step=pwd`);
+  assert.ok(await p5c.locator("#s4").isVisible(), "page Bienvenue visible (idp, extraDomains)");
+  results.push("5c idp avec extraDomains:[localhost] → OK : " + r5c.steps.join(", "));
+  await p5c.close();
+
+  // 5d) Rendu tardif du mot de passe sur la MÊME page (late=1, cas Yealink) : rempli sans clic intermédiaire
+  //     (pas d'« étape 1 validée » : aucun bouton cliqué avant que le mot de passe n'apparaisse).
+  const { r: r5d } = await prepareAndFill({ ...site, loginUrl: LOGIN + "?late=1&no2fa=1" }, SECRET, { submit: true, waitCode: true, codeTimeoutSec: 30 });
+  shape(r5d); noLeak(JSON.stringify(r5d), "réponse fill (mot de passe tardif)");
+  assert.equal(r5d.ok, true, JSON.stringify(r5d));
+  assert.ok(!r5d.steps.some(s => s.startsWith("étape 1 validée")), "aucun clic intermédiaire : " + r5d.steps.join(" | "));
+  const p5d = await benchPage();
+  assert.ok(await p5d.locator("#s4").isVisible(), "page Bienvenue visible (mot de passe tardif)");
+  results.push("5d mot de passe tardif (800 ms) → rempli sans clic intermédiaire : " + r5d.steps.join(", "));
+  await p5d.close();
 
   // 6) Refus sans rien toucher : fill avec un jobId inconnu (refusé par l'extension), prepare avec loginUrl http non locale
   //    (refusé par le pont), prepare d'un site sans onglet ni formulaire → ready ok:false.

@@ -1,0 +1,54 @@
+{
+  "extName": { "message": "Sésame" },
+  "extDescription": { "message": "Remplit vos formulaires de connexion à la demande du serveur Sésame installé sur votre Mac. Rien ne quitte votre ordinateur." },
+
+  "statusTitleUnknown": { "message": "État inconnu" },
+  "statusDetailQuerying": { "message": "Interrogation du service worker…" },
+
+  "testButton": { "message": "Tester la connexion" },
+  "testButtonRunning": { "message": "Test en cours…" },
+  "copyButton": { "message": "Copier l'ID" },
+  "copyButtonTitle": { "message": "Copier l'ID de l'extension" },
+  "copyButtonCopied": { "message": "Copié" },
+  "copyButtonFailed": { "message": "Échec" },
+
+  "idLabelPre": { "message": "ID de cette extension (pour" },
+  "idLabelPost": { "message": ")" },
+
+  "swUnreachableTitle": { "message": "Service worker injoignable" },
+  "swUnreachableDetail": { "message": "Recharge l'extension depuis chrome://extensions." },
+
+  "bridgeConnectedTitle": { "message": "Pont natif connecté" },
+  "bridgeConnectedHint": { "message": "Le serveur Sésame (sesame_login) passera par cette extension pour remplir les formulaires dans ce Chrome." },
+  "detailBusySuffix": { "message": " — remplissage en cours" },
+  "detailLastExchange": {
+    "message": " · dernier échange $time$",
+    "placeholders": { "time": { "content": "$1" } }
+  },
+  "testSuccess": { "message": "Test réussi : Chrome a lancé le pont et il répond." },
+
+  "bridgeUnreachableTitle": { "message": "Pont natif injoignable" },
+  "noAttempt": { "message": "Aucune tentative aboutie pour l'instant." },
+  "fallbackHint": { "message": "Sans pont, Sésame se replie sur son Chrome à profil dédié." },
+
+  "adviceNotFound": { "message": "Manifeste natif absent : dans un terminal, lance `sesame install extension --id <ID ci-dessous>`, puis recharge l'extension." },
+  "adviceForbidden": { "message": "L'ID de cette extension n'est pas autorisé par le manifeste natif : relance `sesame install extension --id <ID ci-dessous>`, puis recharge l'extension." },
+  "adviceExited": { "message": "Le pont s'est arrêté (Node introuvable ? un autre pont actif ?). Vérifie avec `sesame doctor`." },
+
+  "sinceSeconds": { "message": "depuis $n$ s", "placeholders": { "n": { "content": "$1" } } },
+  "sinceMinutes": { "message": "depuis $n$ min", "placeholders": { "n": { "content": "$1" } } },
+  "sinceHours": { "message": "depuis $n$ h", "placeholders": { "n": { "content": "$1" } } },
+  "agoSeconds": { "message": "il y a $n$ s", "placeholders": { "n": { "content": "$1" } } },
+  "agoMinutes": { "message": "il y a $n$ min", "placeholders": { "n": { "content": "$1" } } },
+  "agoHours": { "message": "il y a $n$ h", "placeholders": { "n": { "content": "$1" } } },
+
+  "notifCodeTitle": { "message": "Sésame attend votre code" },
+  "notifCodeMessage": {
+    "message": "$domain$ demande un code de vérification : tapez-le dans l'onglet du site. Sésame attend jusqu'à $timeout$ s.",
+    "placeholders": { "domain": { "content": "$1" }, "timeout": { "content": "$2" } }
+  },
+  "bannerWaitCode": {
+    "message": "Sésame attend que vous saisissiez le code reçu par e-mail, SMS ou application. La connexion reprendra toute seule dès que le site l'aura accepté (encore $remaining$ s).",
+    "placeholders": { "remaining": { "content": "$1" } }
+  }
+}

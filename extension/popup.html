@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="fr">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <title>Sésame</title>
@@ -37,15 +37,15 @@
 
   <div class="status">
     <div class="dot" id="dot"></div>
-    <div><b id="title">État inconnu</b><span id="detail">Interrogation du service worker…</span></div>
+    <div><b id="title"></b><span id="detail"></span></div>
   </div>
 
   <div class="row">
-    <button id="test">Tester la connexion</button>
-    <button id="copy" class="ghost" title="Copier l'ID de l'extension">Copier l'ID</button>
+    <button id="test"></button>
+    <button id="copy" class="ghost"></button>
   </div>
 
-  <div class="id">ID de cette extension (pour <code style="display:inline">sesame install extension --id …</code>)
+  <div class="id"><span id="idLabelPre"></span> <code style="display:inline">sesame install extension --id …</code><span id="idLabelPost"></span>
     <code id="extid">…</code>
   </div>
 

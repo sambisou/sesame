@@ -209,7 +209,7 @@
     "lede": "Une application, un glisser-déposer, et Claude se connecte pour vous. Sans jamais savoir comment.",
     "cta": "Télécharger Sésame pour Mac",
     "versionLabel": "Version",
-    "versionValue": "0.5.1 · prototype, archive zip avec l'app de la barre des menus",
+    "versionValue": "0.6.0 · prototype, archive zip avec l'app de la barre des menus",
     "reqLabel": "Prérequis",
     "reqValue": "macOS 13 ou plus récent, Google Chrome, Node.js 20 ou plus récent",
     "priceLabel": "Prix",

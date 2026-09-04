@@ -10,6 +10,9 @@ struct SiteRequest: Identifiable, Equatable {
     var note: String?
     var caller: String
     var ts: Date
+    /// Domaines supplémentaires proposés par Claude (fournisseur d'identité sur un autre domaine
+    /// enregistrable) : pré-remplit le champ correspondant du formulaire, modifiable par l'utilisateur.
+    var extraDomains: [String] = []
 }
 
 /// Fenêtres ordinaires (pas le menu) : le formulaire d'identifiants, pour une demande de Claude ou un ajout manuel.
@@ -28,7 +31,7 @@ final class Windows: NSObject, NSWindowDelegate {
     }
 
     func showAdd(store: Store) {
-        show(key: "add", title: "Sésame — ajouter un site", store: store, request: nil) { _ in }
+        show(key: "add", title: t("win_add_site_title"), store: store, request: nil) { _ in }
     }
 
     /// Installation guidée de l'extension Chrome.
@@ -36,7 +39,7 @@ final class Windows: NSObject, NSWindowDelegate {
         let key = "extension"
         if let w = open[key] { w.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true); return }
         let w = NSWindow(contentViewController: NSHostingController(rootView: ExtensionSetupView(store: store)))
-        w.title = "Sésame — extension Chrome"
+        w.title = t("win_extension_title")
         w.styleMask = [.titled, .closable]
         w.isReleasedWhenClosed = false
         w.center()

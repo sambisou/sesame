@@ -6,7 +6,7 @@ import { loadSites } from "./config.js";
 import { hasSecret, keychainAvailable } from "./keychain.js";
 import { readJournal, logEvent } from "./journal.js";
 import { isLocked } from "./policy.js";
-import { login, openLogin, waitCode, requestSite } from "./login.js";
+import { login, openLogin, waitCode, requestSite, requestStatus } from "./login.js";
 
 const UNKNOWN_HINT = "Ce site n'est pas dans Sésame. N'envoie pas l'utilisateur dans un terminal : appelle sesame_request_site(site, url, reason) — une fenêtre Sésame s'ouvre sur son Mac pour qu'il saisisse ses identifiants, puis rappelle sesame_login.";
 /** Dernier filet : aucun message d'erreur ne doit jamais transporter une ligne de commande ou un JSON de secret. */
@@ -33,7 +33,7 @@ const text = obj => ({ content: [{ type: "text", text: typeof obj === "string" ?
 
 /** @param {string} [caller] nom de l'appelant journalisé (stdio : argument de ligne de commande ; HTTP : en-tête X-Sesame-Caller) */
 export function buildServer(caller = CALLER) {
-  const server = new McpServer({ name: "sesame", version: "0.5.1" });
+  const server = new McpServer({ name: "sesame", version: "0.6.0" });
 
   server.tool(
     "sesame_list_sites",
@@ -42,7 +42,7 @@ export function buildServer(caller = CALLER) {
     async () => {
       const sites = loadSites();
       const list = Object.entries(sites).map(([key, s]) => ({
-        site: key, domain: s.domain, loginUrl: s.loginUrl, policy: s.policy,
+        site: key, domain: s.domain, extraDomains: Array.isArray(s.extraDomains) && s.extraDomains.length ? s.extraDomains : undefined, loginUrl: s.loginUrl, policy: s.policy,
         hasCredentials: keychainAvailable() ? hasSecret(key) : null, lastUsed: s.lastUsed || null, note: s.note || undefined,
       }));
       return text({ locked: isLocked(), sites: list });
@@ -51,7 +51,7 @@ export function buildServer(caller = CALLER) {
 
   server.tool(
     "sesame_login",
-    "Demande à Sésame de remplir (et par défaut soumettre) le formulaire de connexion d'un site dans l'onglet Chrome de l'utilisateur. Sésame lit les identifiants dans le Trousseau macOS et les tape lui-même : tu ne les vois jamais. Selon la politique du site, l'utilisateur devra valider une boîte de dialogue sur son Mac. Si le site demande ensuite un code (SMS, e-mail, application), Sésame prévient l'utilisateur, attend qu'il le saisisse lui-même dans Chrome, et ne rend la main qu'une fois le code accepté (ou le délai écoulé : alors appelle sesame_wait_code). Chaque demande est journalisée. Utilise le nom exact renvoyé par sesame_list_sites. Fournis un motif court et honnête (reason) : il est affiché à l'utilisateur.",
+    "Demande à Sésame de remplir (et par défaut soumettre) le formulaire de connexion d'un site dans l'onglet Chrome de l'utilisateur. Sésame lit les identifiants dans le Trousseau macOS et les tape lui-même : tu ne les vois jamais. Selon la politique du site, l'utilisateur devra valider une boîte de dialogue sur son Mac. Si le site demande ensuite un code (SMS, e-mail, application), Sésame prévient l'utilisateur, attend qu'il le saisisse lui-même dans Chrome, et ne rend la main qu'une fois le code accepté (ou le délai écoulé : alors appelle sesame_wait_code). Si la connexion bascule vers un autre domaine enregistrable pour le mot de passe (fournisseur d'identité séparé), Sésame propose à l'utilisateur d'autoriser ce domaine (apprentissage assisté, jamais automatique) puis reprend seul — pas besoin de rappeler cet outil. Chaque demande est journalisée. Utilise le nom exact renvoyé par sesame_list_sites. Fournis un motif court et honnête (reason) : il est affiché à l'utilisateur.",
     {
       site: z.string().describe("Nom du site tel que listé par sesame_list_sites (ex. « edf »)"),
       reason: z.string().max(200).optional().describe("Pourquoi tu as besoin de te connecter (affiché à l'utilisateur)"),
@@ -70,15 +70,23 @@ export function buildServer(caller = CALLER) {
 
   server.tool(
     "sesame_request_site",
-    "Quand un site n'est pas encore dans Sésame : ouvre une fenêtre Sésame sur le Mac de l'utilisateur qui lui propose de saisir lui-même identifiant et mot de passe pour ce site (rangés dans le Trousseau macOS, jamais transmis). À utiliser À LA PLACE de « lance sesame add … dans un terminal ». Donne le nom court du site, l'URL exacte de sa page de connexion et un motif honnête. Réponse : enregistré / refusé / déjà connu — jamais les valeurs. Ensuite, appelle sesame_login.",
+    "Quand un site n'est pas encore dans Sésame : ouvre une fenêtre Sésame sur le Mac de l'utilisateur qui lui propose de saisir lui-même identifiant et mot de passe pour ce site (rangés dans le Trousseau macOS, jamais transmis). À utiliser À LA PLACE de « lance sesame add … dans un terminal ». Donne le nom court du site, l'URL exacte de sa page de connexion et un motif honnête. Si tu sais déjà que la connexion bascule vers un autre domaine enregistrable pour le mot de passe (fournisseur d'identité séparé, ex. Expedia : expediapartnercentral.com → expediagroup.com), passe-le dans extraDomains — sinon sesame_login te le proposera lui-même la première fois (apprentissage assisté, toujours avec l'accord de l'utilisateur). NON BLOQUANT quand l'app Sésame tourne : la réponse revient tout de suite avec status « attente » et un requestId — interroge ensuite sesame_request_status(requestId). En repli (app absente), des boîtes de dialogue macOS s'affichent : bloquantes, mais courtes. Réponse finale (via sesame_request_status) : enregistré / refusé / expiré / déjà connu — jamais les valeurs.",
     {
       site: z.string().max(40).describe("Nom court du site, minuscules (ex. « infomaniak »)"),
       url: z.string().url().describe("URL de la page de connexion (ex. https://login.infomaniak.com/)"),
       reason: z.string().max(200).optional().describe("Pourquoi tu as besoin de ce site (affiché à l'utilisateur)"),
       note: z.string().max(120).optional().describe("Mémo utile, ex. « connexion en 2 étapes : e-mail, Continuer, mot de passe »"),
+      extraDomains: z.array(z.string()).max(5).optional().describe("Domaines supplémentaires (autre domaine enregistrable) où la connexion peut basculer, ex. pour le mot de passe ou un fournisseur d'identité"),
       replace: z.boolean().optional().default(false).describe("true pour réenregistrer un site déjà connu (mot de passe changé, ou élément du Trousseau à recréer)"),
     },
-    async ({ site, url, reason, note, replace }) => text(await guarded(() => requestSite({ site, url, reason, note, replace, caller })))
+    async ({ site, url, reason, note, extraDomains, replace }) => text(await guarded(() => requestSite({ site, url, reason, note, extraDomains, replace, caller })))
+  );
+
+  server.tool(
+    "sesame_request_status",
+    "Interroge l'état d'une demande sesame_request_site en cours (fenêtre ouverte dans l'app Sésame sur le Mac de l'utilisateur), sans jamais bloquer : « attente » (toujours ouverte, réessaie plus tard), « enregistré » (l'utilisateur a validé — appelle sesame_login), « refusé » (« Plus tard », fermeture, ou app disparue), « expiré » (plus de 10 minutes sans réponse, ou identifiant inconnu / déjà traité). Utilise le requestId renvoyé par sesame_request_site.",
+    { requestId: z.string().describe("Identifiant renvoyé par sesame_request_site (status « attente »)") },
+    async ({ requestId }) => text(await guarded(() => requestStatus({ requestId, caller })))
   );
 
   server.tool(

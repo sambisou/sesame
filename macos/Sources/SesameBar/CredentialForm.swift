@@ -14,6 +14,7 @@ struct CredentialForm: View {
     @State private var username = ""
     @State private var password = ""
     @State private var note: String
+    @State private var extraDomainsText: String
     @State private var reveal = false
     @State private var error: String?
     @State private var busy = false
@@ -23,6 +24,7 @@ struct CredentialForm: View {
         _name = State(initialValue: request?.site ?? "")
         _url = State(initialValue: request?.url ?? "")
         _note = State(initialValue: request?.note ?? "")
+        _extraDomainsText = State(initialValue: (request?.extraDomains ?? []).joined(separator: ", "))
     }
 
     var body: some View {
@@ -30,13 +32,13 @@ struct CredentialForm: View {
             HStack(spacing: 10) {
                 Image(nsImage: SeedIcon.appIcon(size: 64)).resizable().frame(width: 32, height: 32)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(request == nil ? "Ajouter un site" : "Claude a besoin de « \(request!.site) »")
+                    Text(request == nil ? t("cred_add_title") : t("cred_need_title", request!.site))
                         .font(.system(size: 14, weight: .semibold))
                     if let r = request {
-                        Text("\(r.caller) demande à se connecter à \(Store.siteDomain(for: URL(string: r.url)?.host ?? r.url))" + (r.reason.isEmpty ? "" : " — \(r.reason)"))
+                        Text(t("cred_caller_wants", r.caller, Store.siteDomain(for: URL(string: r.url)?.host ?? r.url)) + (r.reason.isEmpty ? "" : t("cred_reason_suffix", r.reason)))
                             .font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(3)
                     } else {
-                        Text("Vos identifiants vont dans le Trousseau macOS. Claude ne les verra jamais.")
+                        Text(t("cred_subtitle_no_request"))
                             .font(.system(size: 11)).foregroundStyle(.secondary)
                     }
                 }
@@ -44,13 +46,13 @@ struct CredentialForm: View {
 
             VStack(spacing: 8) {
                 if request == nil {
-                    row("Nom court") { TextField("", text: $name, prompt: Text("infomaniak")).textFieldStyle(.roundedBorder) }
-                    row("Page de connexion") { TextField("", text: $url, prompt: Text("https://login.exemple.com/")).textFieldStyle(.roundedBorder) }
+                    row(t("label_name")) { TextField("", text: $name, prompt: Text("infomaniak")).textFieldStyle(.roundedBorder) }
+                    row(t("label_login_page")) { TextField("", text: $url, prompt: Text(t("placeholder_login_url"))).textFieldStyle(.roundedBorder) }
                 } else {
-                    row("Page de connexion") { Text(url).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle).frame(maxWidth: .infinity, alignment: .leading) }
+                    row(t("label_login_page")) { Text(url).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle).frame(maxWidth: .infinity, alignment: .leading) }
                 }
-                row("Identifiant") { TextField("", text: $username, prompt: Text("e-mail ou nom d'utilisateur")).textFieldStyle(.roundedBorder) }
-                row("Mot de passe") {
+                row(t("label_username")) { TextField("", text: $username, prompt: Text(t("placeholder_username"))).textFieldStyle(.roundedBorder) }
+                row(t("label_password")) {
                     HStack(spacing: 6) {
                         Group {
                             if reveal { TextField("", text: $password).textFieldStyle(.roundedBorder) }
@@ -59,20 +61,23 @@ struct CredentialForm: View {
                         Button { reveal.toggle() } label: {
                             Image(systemName: reveal ? "eye.slash" : "eye").font(.system(size: 13))
                         }
-                        .buttonStyle(.plain).foregroundStyle(.secondary).help(reveal ? "Masquer le mot de passe" : "Afficher le mot de passe")
+                        .buttonStyle(.plain).foregroundStyle(.secondary).help(reveal ? t("eye_hide") : t("eye_show"))
                     }
                 }
-                row("Mémo (optionnel)") { TextField("", text: $note, prompt: Text("connexion en 2 étapes")).textFieldStyle(.roundedBorder) }
+                row(t("label_note")) { TextField("", text: $note, prompt: Text(t("placeholder_note"))).textFieldStyle(.roundedBorder) }
+                row(t("label_extra_domains")) { TextField("", text: $extraDomainsText, prompt: Text(t("placeholder_extra_domains"))).textFieldStyle(.roundedBorder) }
             }
+            Text(t("extra_domains_help"))
+                .font(.system(size: 10)).foregroundStyle(.secondary)
 
             if let e = error { Text(e).font(.system(size: 11)).foregroundStyle(Color(red: 0.7, green: 0.23, blue: 0.18)) }
 
             HStack {
-                Text("Enregistré dans le Trousseau, sans application de confiance : chaque lecture vous sera demandée.")
+                Text(t("keychain_footer"))
                     .font(.system(size: 10)).foregroundStyle(.secondary)
                 Spacer()
-                Button(request == nil ? "Annuler" : "Plus tard") { onDone(false) }.keyboardShortcut(.cancelAction)
-                Button("Enregistrer") { save() }.keyboardShortcut(.defaultAction).buttonStyle(.borderedProminent)
+                Button(request == nil ? t("cancel") : t("later")) { onDone(false) }.keyboardShortcut(.cancelAction)
+                Button(t("save")) { save() }.keyboardShortcut(.defaultAction).buttonStyle(.borderedProminent)
                     .disabled(busy || name.isEmpty || url.isEmpty || password.isEmpty)
             }
         }
@@ -89,7 +94,8 @@ struct CredentialForm: View {
 
     private func save() {
         busy = true
-        if let e = store.addSite(name: name, url: url, username: username, password: password, note: note) {
+        let extras = extraDomainsText.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+        if let e = store.addSite(name: name, url: url, username: username, password: password, note: note, extraDomains: extras) {
             error = e; busy = false
         } else {
             password = ""

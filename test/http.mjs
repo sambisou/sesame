@@ -23,7 +23,7 @@ const { StreamableHTTPClientTransport } = await import("@modelcontextprotocol/sd
 const c1 = new Client({ name: "http-test", version: "0" });
 await c1.connect(new StreamableHTTPClientTransport(new URL(srv.url), { requestInit: { headers: { Authorization: `Bearer ${srv.token}`, "X-Sesame-Caller": "test-http" } } }));
 const tools = (await c1.listTools()).tools.map(t => t.name).sort();
-assert.deepEqual(tools, ["sesame_journal", "sesame_list_sites", "sesame_login", "sesame_open_login", "sesame_request_site", "sesame_wait_code"]);
+assert.deepEqual(tools, ["sesame_journal", "sesame_list_sites", "sesame_login", "sesame_open_login", "sesame_request_site", "sesame_request_status", "sesame_wait_code"]);
 const sites = JSON.parse((await c1.callTool({ name: "sesame_list_sites", arguments: {} })).content[0].text);
 assert.equal(sites.sites[0].site, "edf");
 await c1.close();

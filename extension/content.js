@@ -302,6 +302,23 @@
       const how = msg.submit ? submitNear(msg.site, el) : null;
       return { ok: true, how };
     },
+    /** Valide l'étape 1 (clic « Suivant » / Entrée) sans retaper l'identifiant : appelé séparément par le
+     *  service worker une fois confirmé qu'aucun mot de passe n'est apparu dans la même frame (voir
+     *  fillLogin, background.js) — jamais de clic avant d'avoir laissé sa chance au mot de passe. */
+    submitStep(msg) {
+      const el = locateUser(msg.site, msg.mode);
+      if (!el) return { ok: false, error: "champ identifiant introuvable au moment de la validation" };
+      return { ok: true, how: submitNear(msg.site, el) };
+    },
+    /** Sondage générique, hors site : cette frame principale, en https (ou http sur un hôte local, bancs
+     *  d'essai), montre-t-elle déjà un mot de passe ? Utilisé UNIQUEMENT pour proposer un nouveau domaine
+     *  (apprentissage assisté, jamais d'ajout automatique) quand l'onglet est parti hors périmètre :
+     *  aucune donnée du site n'est requise ni utilisée ici. */
+    passProbe() {
+      const isTop = window === window.top;
+      const secure = location.protocol === "https:" || (location.protocol === "http:" && LOCAL_HOSTS.includes(location.hostname));
+      return { allowed: true, isTop, pass: isTop && secure ? !!locatePass({}) : false };
+    },
     /** Tape le mot de passe, et soumet si demandé. */
     fillPassword(msg) {
       const el = locatePass(msg.site);
@@ -349,7 +366,7 @@
       const op = ops[msg.op];
       if (!op) out = { ok: false, error: "opération inconnue" };
       // Les sondages répondent « allowed:false » eux-mêmes ; retirer notre propre bandeau est toujours permis ; tout le reste exige une frame du site.
-      else if (msg.op !== "probe" && msg.op !== "sfProbe" && msg.op !== "hideBanner" && !frameAllowed(msg.site || {})) out = { ok: false, allowed: false, error: "frame hors du site : action refusée" };
+      else if (msg.op !== "probe" && msg.op !== "sfProbe" && msg.op !== "hideBanner" && msg.op !== "passProbe" && !frameAllowed(msg.site || {})) out = { ok: false, allowed: false, error: "frame hors du site : action refusée" };
       else out = op(msg);
     } catch (e) {
       out = { ok: false, error: String(e && e.message ? e.message : e).slice(0, 200) };

@@ -4,8 +4,13 @@ import assert from "node:assert/strict"; import { fileURLToPath } from "node:url
 process.env.SESAME_HOME = fs.mkdtempSync(path.join(os.tmpdir(), "sesame-2fa-"));
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const html = fs.readFileSync(path.join(ROOT, "test/2fa-page.html"));
-const srv = http.createServer((req, res) => { res.setHeader("content-type", "text/html; charset=utf-8"); res.end(html); });
+const handler = (req, res) => { res.setHeader("content-type", "text/html; charset=utf-8"); res.end(html); };
+const srv = http.createServer(handler);
 await new Promise(r => srv.listen(8765, "127.0.0.1", r));
+// « localhost » (test idp=1) : selon le système il résout vers ::1 ou 127.0.0.1 (déjà couvert) — on couvre
+// aussi ::1, en silence si l'IPv6 est indisponible.
+const srv6 = http.createServer(handler);
+await new Promise(r => { srv6.on("error", () => r()); srv6.listen(8765, "::1", r); });
 setTimeout(() => { console.error("⏱ délai global dépassé"); process.exit(2); }, 120000);
 const { connect, openPage, fillLogin, waitForSecondFactor, stopLaunchedChrome } = await import("../src/browser.js");
 process.on("exit", () => stopLaunchedChrome());
@@ -58,5 +63,34 @@ const r4 = await fillLogin(page, site, { username: "sam@test.local", password: "
 assert.equal(r4.ok, true); assert.match(r4.hint || "", /refusés/); assert.equal(r4.secondFactor, undefined);
 steps.push("4 mauvais mot de passe → hint « refusés », aucune attente");
 await page.close();
-await typist.close(); await b.close(); srv.closeAllConnections(); srv.close();
+// 5) Fournisseur d'identité séparé (idp=1) : « Suivant » envoie sur localhost pour le mot de passe. Sans
+//    extraDomains : apprentissage assisté détecté (needsDomain « localhost »), rien tapé, abandon propre.
+page = await openPage(b, site.loginUrl + "?idp=1&no2fa=1");
+const r5 = await fillLogin(page, site, secret(), { secondFactorTimeoutSec: 10 });
+assert.equal(r5.ok, false, JSON.stringify(r5));
+assert.equal(r5.needsDomain, "localhost", JSON.stringify(r5));
+assert.ok(r5.steps.some(s => s.startsWith("identifiant rempli")), r5.steps.join(" | "));
+assert.ok(!r5.steps.some(s => s.startsWith("mot de passe")), "mot de passe non tapé : " + r5.steps.join(" | "));
+steps.push("5 idp sans extraDomains → needsDomain « localhost », rien tapé");
+await page.close();
+// 6) Même scénario, mais extraDomains:["localhost"] est déjà autorisé (comme après une approbation par
+//    l'utilisateur, voir approveExtraDomain côté src/login.js) : le remplissage se poursuit tout seul.
+const siteIdp = { ...site, extraDomains: ["localhost"] };
+page = await openPage(b, site.loginUrl + "?idp=1&no2fa=1");
+const r6 = await fillLogin(page, siteIdp, secret(), { secondFactorTimeoutSec: 10 });
+assert.equal(r6.ok, true, JSON.stringify(r6));
+assert.ok(r6.steps.some(s => s.startsWith("mot de passe rempli")), r6.steps.join(" | "));
+assert.ok(await page.locator("#s4").isVisible(), "page Bienvenue visible (idp, extraDomains)");
+steps.push("6 idp avec extraDomains:[localhost] → OK : " + r6.steps.join(", "));
+await page.close();
+// 7) Rendu tardif du mot de passe sur la MÊME page (late=1, cas Yealink) : rempli sans clic intermédiaire
+//    (pas d'« étape 1 validée » dans les steps : aucun bouton cliqué avant le mot de passe).
+page = await openPage(b, site.loginUrl + "?late=1&no2fa=1");
+const r7 = await fillLogin(page, site, secret(), { secondFactorTimeoutSec: 10 });
+assert.equal(r7.ok, true, JSON.stringify(r7));
+assert.ok(!r7.steps.some(s => s.startsWith("étape 1 validée")), "aucun clic intermédiaire : " + r7.steps.join(" | "));
+assert.ok(await page.locator("#s4").isVisible(), "page Bienvenue visible (late)");
+steps.push("7 mot de passe tardif (800 ms) → rempli sans clic intermédiaire : " + r7.steps.join(", "));
+await page.close();
+await typist.close(); await b.close(); srv.closeAllConnections(); srv.close(); srv6.closeAllConnections(); srv6.close();
 console.log("✅ 2FA live OK\n  " + steps.join("\n  ")); process.exit(0);

@@ -206,6 +206,7 @@ function finish(r) {
     secondFactor: (r && r.secondFactor) || null,
     hint: (r && r.hint) || null,
     reason: (r && r.reason) || null,
+    needsDomain: !!(r && r.needsDomain),
   };
 }
 /** Forme exacte de la réponse « ready ». */
@@ -359,6 +360,23 @@ function pickUser(site, frames, pageUrl) {
   return null;
 }
 function pickPass(frames) { return frames.find(x => x.pass) || null; }
+/** Champ mot de passe visible dans UNE frame donnée (pas de recherche sur tout l'onglet). */
+async function pickPassInFrame(tabId, site, frameId) {
+  const frames = await scan(tabId, site);
+  return frames.find(x => x.frameId === frameId && x.pass) || null;
+}
+/**
+ * L'onglet est parti hors périmètre : sa frame principale, en https (ou http sur un hôte local, bancs
+ * d'essai), montre-t-elle déjà un mot de passe ? Sondage générique (op « passProbe »), jamais restreint
+ * au site visé : le domaine ne correspond justement plus. Le domaine enregistrable candidat est calculé
+ * côté pont (src/login.js, siteDomainFor) à partir de l'URL déjà renvoyée par `bail`.
+ */
+async function detectNeedsDomain(tabId) {
+  const t = await getTab(tabId);
+  if (!t || !secureUrl(t.url || "")) return false;
+  const r = await ask(tabId, 0, { op: "passProbe" }, { reinject: true });
+  return !!(r && r.pass);
+}
 
 /** L'onglet montre-t-il un formulaire de connexion (identifiant ou mot de passe) ? */
 async function hasLoginFields(tabId, site) {
@@ -377,7 +395,12 @@ async function gotoLogin(tabId, url, site) {
   }
   return false;
 }
-/** Onglet https du site (le plus récent d'abord) : de préférence avec un champ mot de passe, puis un identifiant plausible. */
+/**
+ * Onglet https du site (le plus récent d'abord, extraDomains compris via siteMatchesUrl) : de préférence
+ * avec un champ mot de passe, puis un identifiant plausible, puis un onglet déjà à l'étape code (2e
+ * facteur) — utile à sesame_wait_code même si fillLogin n'a pas été appelé dans cette même session
+ * (service worker relancé, ou remplissage fait par le Chrome Sésame).
+ */
 async function findTab(site) {
   const all = await chrome.tabs.query({});
   const tabs = all.filter(t => t.id != null && secureUrl(t.url || "") && siteMatchesUrl(site, t.url));
@@ -387,6 +410,7 @@ async function findTab(site) {
   for (const t of tabs.slice(0, 8)) scans.push({ tab: t, frames: await scan(t.id, site).catch(() => []) });
   for (const s of scans) if (pickPass(s.frames)) return s.tab;
   for (const s of scans) if (pickUser(site, s.frames, s.tab.url)) return s.tab;
+  for (const t of tabs.slice(0, 8)) { if (composeSecondFactor(site, await scan(t.id, site, "sfProbe").catch(() => []))) return t; }
   return tabs[0];
 }
 
@@ -429,8 +453,8 @@ async function startWaitSignals(tabId, site, timeoutSec, text) {
   try { await chrome.action.setBadgeText({ text: "2FA" }); } catch {}
   try {
     await chrome.notifications.create(NOTIFICATION_ID, {
-      type: "basic", iconUrl: "icons/128.png", title: "Sésame attend votre code",
-      message: `${site.domain} demande un code de vérification : tapez-le dans l'onglet du site. Sésame attend jusqu'à ${timeoutSec} s.`,
+      type: "basic", iconUrl: "icons/128.png", title: chrome.i18n.getMessage("notifCodeTitle"),
+      message: chrome.i18n.getMessage("notifCodeMessage", [site.domain, String(timeoutSec)]),
       priority: 1,
     });
   } catch {}
@@ -451,12 +475,12 @@ async function stopWaitSignals(tabId, site) {
 async function waitForSecondFactor(tabId, site, { timeoutSec = 180 } = {}) {
   const started = Date.now();
   const deadline = started + timeoutSec * 1000;
-  const banner = `Sésame attend que vous saisissiez le code reçu par e-mail, SMS ou application. La connexion reprendra toute seule dès que le site l'aura accepté (encore ${timeoutSec} s).`;
+  const banner = remaining => chrome.i18n.getMessage("bannerWaitCode", [String(remaining)]);
   const elapsed = () => Math.round((Date.now() - started) / 1000);
   let clear = 0;
   await bringToFront(tabId); // ici, oui : l'utilisateur doit taper le code
   try {
-    await startWaitSignals(tabId, site, timeoutSec, banner);
+    await startWaitSignals(tabId, site, timeoutSec, banner(timeoutSec));
     while (Date.now() < deadline) {
       const tab = await getTab(tabId);
       if (!tab) return { done: false, elapsedSec: elapsed(), reason: "onglet fermé pendant l'attente du code" };
@@ -467,7 +491,7 @@ async function waitForSecondFactor(tabId, site, { timeoutSec = 180 } = {}) {
       const still = composeSecondFactor(site, frames);
       if (!still || still.kind === "texte-seul") clear++; else clear = 0;
       if (clear >= 2) return { done: true, elapsedSec: elapsed() };
-      await showBanner(tabId, site, banner.replace(/encore \d+ s/, `encore ${remaining} s`));
+      await showBanner(tabId, site, banner(remaining));
       await sleep(1000);
     }
     return { done: false, elapsedSec: timeoutSec, reason: "délai dépassé" };
@@ -482,9 +506,19 @@ async function waitForSecondFactor(tabId, site, { timeoutSec = 180 } = {}) {
 async function fillLogin(tabId, site, secret, { submitForm, waitSecondFactor, secondFactorTimeoutSec, steps, deadline, ctl }) {
   const where = f => (f && !f.isTop ? ` (iframe ${f.url})` : "");
   const tabUrl = async () => { const t = await getTab(tabId); return t ? publicUrl(t.url) : ""; };
+  /**
+   * Abandon parce que l'onglet est parti hors périmètre : apprentissage assisté. Si la page (frame
+   * principale, https) montre déjà un mot de passe, on renvoie needsDomain:true — le pont (src/login.js)
+   * calcule alors le domaine enregistrable candidat à partir de `url` et propose de l'autoriser (jamais
+   * d'ajout automatique). Sinon, abandon classique.
+   */
   const bail = async () => {
     const t = await getTab(tabId);
-    return { ok: false, steps, url: t ? publicUrl(t.url) : "", reason: `onglet parti vers ${t ? publicUrl(t.url) : "(onglet fermé)"} : remplissage abandonné` };
+    const url = t ? publicUrl(t.url) : "";
+    if (t && (await detectNeedsDomain(tabId))) {
+      return { ok: false, steps, url, needsDomain: true, reason: `onglet parti vers ${url} pour le mot de passe : domaine à autoriser ?` };
+    }
+    return { ok: false, steps, url, reason: `onglet parti vers ${t ? url : "(onglet fermé)"} : remplissage abandonné` };
   };
   const expired = async () => ({ ok: false, steps, url: await tabUrl(), reason: "délai de l'extension dépassé avant la frappe : remplissage abandonné" });
 
@@ -514,10 +548,32 @@ async function fillLogin(tabId, site, secret, { submitForm, waitSecondFactor, se
     if (ctl.aborted) return expired();
     if (!(await onSite(tabId, site))) return bail();
     // Jamais de réinjection pour un message qui porte un secret : si la frame a disparu, on s'arrête.
-    const r = await ask(tabId, user.frameId, { op: "fillUser", site, username: secret.username, mode: user.mode, submit: !pass }, { reinject: false });
+    // On ne clique JAMAIS ici (submit:false) : voir plus bas — un champ mot de passe déjà rendu dans la
+    // même frame doit être rempli avant tout clic (rendu tardif après hydratation, cas Yealink).
+    const r = await ask(tabId, user.frameId, { op: "fillUser", site, username: secret.username, mode: user.mode, submit: false }, { reinject: false });
     if (!r || !r.ok) return { ok: false, steps, url: await tabUrl(), reason: r && r.error ? `identifiant : ${r.error}` : "le champ identifiant a disparu avant la frappe" };
     steps.push(`identifiant rempli${where(user)}`);
     how = r.how;
+
+    if (!pass) {
+      // Champ mot de passe déjà rendu dans la MÊME frame ? Sinon, attendre 1 s et relocaliser avant de
+      // décider qu'il s'agit d'une connexion en deux étapes.
+      pass = await pickPassInFrame(tabId, site, user.frameId);
+      if (!pass) {
+        await sleep(1000);
+        if (ctl.aborted) return expired();
+        if (!(await onSite(tabId, site))) return bail();
+        pass = await pickPassInFrame(tabId, site, user.frameId);
+      }
+    }
+    if (!pass) {
+      // Connexion en deux étapes confirmée : on valide l'identifiant maintenant (clic différé jusqu'ici).
+      if (ctl.aborted) return expired();
+      if (!(await onSite(tabId, site))) return bail();
+      const rs = await ask(tabId, user.frameId, { op: "submitStep", site, mode: user.mode }, { reinject: false });
+      if (!rs || !rs.ok) return { ok: false, steps, url: await tabUrl(), reason: rs && rs.error ? `étape 1 : ${rs.error}` : "le champ identifiant a disparu avant la validation" };
+      how = rs.how;
+    }
   }
 
   if (!pass && user) {

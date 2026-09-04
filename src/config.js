@@ -94,3 +94,26 @@ export function siteMatchesUrl(site, url) {
   const domains = [site.domain, ...(site.extraDomains || [])].filter(Boolean);
   return domains.some(d => h === d || h.endsWith("." + d));
 }
+
+const IP_RE = /^\d+\.\d+\.\d+\.\d+$/;
+
+/**
+ * Valide un domaine supplémentaire (extraDomains) pour un site : accepte un domaine nu (edf.fr) ou une
+ * URL/hôte (https://login.edf.fr/x, login.edf.fr) et en tire le domaine enregistrable (siteDomainFor).
+ * Refuse : une IP non locale, le domaine principal du site lui-même, et les hébergeurs mutualisés
+ * (SHARED_SUFFIXES) où chaque sous-domaine appartient à quelqu'un d'autre. Utilisé par `sesame add
+ * --extra-domain`, `sesame_request_site` et l'apprentissage assisté (src/login.js). Renvoie
+ * `{ domain }` si accepté, `{ error }` sinon (jamais les deux).
+ */
+export function validateExtraDomain(mainDomain, candidate) {
+  const raw = String(candidate || "").trim().toLowerCase();
+  if (!raw) return { error: "Domaine vide." };
+  const asUrl = /^https?:\/\//.test(raw) ? raw : `https://${raw}/`;
+  let domain;
+  try { domain = siteDomainFor(asUrl); } catch { domain = null; }
+  if (!domain) return { error: `Domaine invalide : « ${candidate} ».` };
+  if (IP_RE.test(domain) && domain !== "127.0.0.1") return { error: `« ${domain} » est une adresse IP : refusé (sauf hôte local).` };
+  if (domain === mainDomain) return { error: `« ${domain} » est déjà le domaine principal du site.` };
+  if (SHARED_SUFFIXES.has(domain)) return { error: `« ${domain} » est un hébergeur mutualisé (chaque sous-domaine appartient à quelqu'un d'autre) : refusé.` };
+  return { domain };
+}

@@ -14,10 +14,10 @@ struct ExtensionStatus: Equatable {
     var level: Int { connected ? 3 : bridge ? 2 : manifest ? 1 : 0 }
     var label: String {
         switch level {
-        case 3: return "Extension Chrome connectée" + (version.map { " · \($0)" } ?? "")
-        case 2: return "Pont prêt, extension pas encore connectée"
-        case 1: return "Extension déclarée, Chrome ne l'a pas encore chargée"
-        default: return "Extension Chrome non installée"
+        case 3: return t("ext_status_connected") + (version.map { " · \($0)" } ?? "")
+        case 2: return t("ext_status_bridge_ready")
+        case 1: return t("ext_status_declared")
+        default: return t("ext_status_not_installed")
         }
     }
 }
@@ -102,11 +102,11 @@ enum ChromeExtension {
     /// Lance `sesame install extension --id …` avec le PATH de l'utilisateur ; renvoie la sortie.
     static func install(id: String) -> (ok: Bool, output: String) {
         guard id.range(of: #"^[a-p]{32}$"#, options: .regularExpression) != nil else {
-            return (false, "L'ID d'une extension Chrome fait 32 lettres entre a et p (copie-le sous le nom de l'extension dans chrome://extensions).")
+            return (false, t("ext_id_invalid"))
         }
         let cmd = "sesame install extension --id \(id)"
         let r = shellFull(cmd)
-        return (r.status == 0, r.output.isEmpty ? (r.status == 0 ? "Pont déclaré." : "Échec (code \(r.status)).") : r.output)
+        return (r.status == 0, r.output.isEmpty ? (r.status == 0 ? t("ext_bridge_declared") : t("ext_install_failed", "\(r.status)")) : r.output)
     }
 
     static func openChromeExtensionsPage() {
@@ -147,29 +147,29 @@ struct ExtensionSetupView: View {
             HStack(spacing: 10) {
                 Image(nsImage: SeedIcon.appIcon(size: 64)).resizable().frame(width: 32, height: 32)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Extension Chrome").font(.system(size: 14, weight: .semibold))
-                    Text("Pour que Sésame remplisse vos identifiants dans votre Chrome habituel, sans fenêtre à part.").font(.system(size: 11)).foregroundStyle(.secondary)
+                    Text(t("ext_setup_title")).font(.system(size: 14, weight: .semibold))
+                    Text(t("ext_setup_subtitle")).font(.system(size: 11)).foregroundStyle(.secondary)
                 }
             }
 
             statusLine
 
-            step(1, "Ouvrez la page des extensions de Chrome et activez le « Mode développeur » (en haut à droite).") {
-                Button("Ouvrir chrome://extensions") { ChromeExtension.openChromeExtensionsPage() }
+            step(1, t("ext_step1")) {
+                Button(t("ext_step1_button")) { ChromeExtension.openChromeExtensionsPage() }
             }
-            step(2, "Cliquez « Charger l'extension non empaquetée » et choisissez le dossier « extension » de Sésame.") {
-                if extDir != nil { Button("Afficher le dossier dans le Finder") { ChromeExtension.revealExtensionDir() } }
-                else { Text("Dossier introuvable : la commande « sesame » n'est pas installée. Relancez « Install Sesame.command ».").font(.system(size: 11)).foregroundStyle(Color(red: 0.7, green: 0.23, blue: 0.18)) }
+            step(2, t("ext_step2")) {
+                if extDir != nil { Button(t("ext_step2_button")) { ChromeExtension.revealExtensionDir() } }
+                else { Text(t("ext_step2_missing")).font(.system(size: 11)).foregroundStyle(Color(red: 0.7, green: 0.23, blue: 0.18)) }
             }
-            step(3, "Copiez l'ID affiché sous « Sésame » dans la liste des extensions, collez-le ici, puis rechargez l'extension (bouton ↻).") {
+            step(3, t("ext_step3")) {
                 HStack(spacing: 8) {
-                    TextField("", text: $id, prompt: Text("32 lettres, ex. abcdefghijklmnopabcdefghijklmnop")).textFieldStyle(.roundedBorder).font(.system(size: 11, design: .monospaced)).frame(width: 300)
-                    Button(busy ? "…" : "Relier") { link() }.disabled(busy || id.count != 32).buttonStyle(.borderedProminent)
+                    TextField("", text: $id, prompt: Text(t("ext_step3_placeholder"))).textFieldStyle(.roundedBorder).font(.system(size: 11, design: .monospaced)).frame(width: 300)
+                    Button(busy ? "…" : t("ext_link_button")) { link() }.disabled(busy || id.count != 32).buttonStyle(.borderedProminent)
                 }
             }
             if let o = output { Text(o).font(.system(size: 11, design: .monospaced)).foregroundStyle(.secondary).textSelection(.enabled).lineLimit(6) }
 
-            Text("À savoir : l'extension tape le mot de passe dans une page de votre Chrome de tous les jours. Une autre extension ayant accès à cette page pourrait l'observer, comme elle pourrait vous observer le taper. Le Chrome Sésame séparé n'a pas cette exposition. Les deux restent disponibles ; Sésame prend l'extension quand elle répond, sinon le Chrome séparé.")
+            Text(t("ext_exposure_note"))
                 .font(.system(size: 10.5)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
         }
         .padding(18)
@@ -183,7 +183,7 @@ struct ExtensionSetupView: View {
             Circle().fill(st.level == 3 ? Color(red: 0.18, green: 0.48, blue: 0.31) : st.level > 0 ? Color(red: 0.85, green: 0.58, blue: 0.15) : Color.secondary.opacity(0.4)).frame(width: 8, height: 8)
             Text(st.label).font(.system(size: 12, weight: .medium))
             Spacer()
-            if st.level == 3 { Text("Rien d'autre à faire.").font(.system(size: 11)).foregroundStyle(.secondary) }
+            if st.level == 3 { Text(t("ext_nothing_else")).font(.system(size: 11)).foregroundStyle(.secondary) }
         }
         .padding(10).background(RoundedRectangle(cornerRadius: 8).fill(Color.primary.opacity(0.04)))
     }

@@ -50,6 +50,46 @@ final class Windows: NSObject, NSWindowDelegate {
         NSApp.activate(ignoringOtherApps: true)
     }
 
+    /// Fenêtre d'accueil (trois écrans), première ouverture seulement (voir Store.checkFirstRun). « Terminer »
+    /// marque le marqueur puis enchaîne directement sur l'ajout du premier site.
+    func showOnboarding(store: Store) {
+        let key = "onboarding"
+        if let w = open[key] { w.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true); return }
+        let host = NSHostingController(rootView: OnboardingView(store: store) { [weak self] in
+            store.markOnboarded()
+            self?.close(key)
+            Windows.shared.showAdd(store: store)
+        })
+        let w = NSWindow(contentViewController: host)
+        w.title = t("win_onboarding_title")
+        w.styleMask = [.titled, .closable]
+        w.isReleasedWhenClosed = false
+        w.level = .floating
+        w.center()
+        w.delegate = self
+        open[key] = w
+        // Fermeture par le bouton rouge avant « Terminer » : ne pas re-proposer l'accueil au prochain lancement.
+        onClose[key] = { store.markOnboarded() }
+        w.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    /// Réglages : démarrage à l'ouverture de session, réinstallation Claude, dossier de Sésame, version.
+    func showSettings(store: Store) {
+        let key = "settings"
+        if let w = open[key] { w.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true); return }
+        let w = NSWindow(contentViewController: NSHostingController(rootView: SettingsView(store: store)))
+        w.title = t("win_settings_title")
+        w.styleMask = [.titled, .closable]
+        w.isReleasedWhenClosed = false
+        w.center()
+        w.delegate = self
+        open[key] = w
+        onClose[key] = {}
+        w.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
     private func show(key: String, title: String, store: Store, request: SiteRequest?, onDone: @escaping (Bool) -> Void) {
         if let w = open[key] { w.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true); return }
         let host = NSHostingController(rootView: CredentialForm(store: store, request: request) { [weak self] saved in

@@ -2,7 +2,7 @@
 
 > 🇫🇷 [Version française](README.fr.md) · Website: [sesamekey.app](https://sesamekey.app) · License: [MIT](LICENSE) · [Security & reporting](SECURITY.md)
 >
-> **Personal prototype, provided as is, without warranty or support.** Sésame handles your credentials: read [SECURITY.md](SECURITY.md) before installing, use it only for your own accounts, at your own risk.
+> Sésame handles your credentials, so it is worth knowing how: [SECURITY.md](SECURITY.md) explains exactly what it does, what it never does, and where the limits are. Free and open source under the MIT licence, which means it comes without warranty.
 
 Sésame lets Claude (Cowork, Claude Code, Claude Desktop) **log in to your web accounts without ever knowing your credentials**.
 
@@ -34,20 +34,33 @@ The idea: Claude never asks *"give me your EDF password"*. It asks Sésame *"fil
 
 There is **no tool** that returns a username or a password. Secrets never leave the Sésame ↔ Keychain ↔ Chrome path, all on your Mac. Error messages are truncated and never contain a field value.
 
-## Install (5 minutes, macOS)
+## Install (two minutes, macOS)
 
-Requirements: macOS 13 or later, Node.js 20 or later (`brew install node` or [nodejs.org](https://nodejs.org)), Google Chrome, Claude Desktop and/or Claude Code.
+Requirements: macOS 13 or later, and Google Chrome. Nothing else — Sésame carries everything it needs.
 
-**Easiest:** download [`sesame-macos.zip`](https://github.com/sambisou/sesame/releases/latest/download/sesame-macos.zip), unzip it, then double-click **`Install Sesame.command`**. The first time, macOS may refuse to open it: right-click → *Open*.
+1. Download **[Sesame.dmg](https://github.com/sambisou/sesame/releases/latest)**.
+2. Open it and drag **Sésame** into your Applications folder.
+3. Open Sésame. A short setup connects it to Claude, and a small seed appears in your menu bar.
 
-**Or from a terminal:**
+The first time, macOS says the app comes from an unidentified developer: right-click the app → *Open* →
+*Open*. (This goes away once the app is notarised by Apple.)
+
+From then on, everything happens in the menu bar: add or remove a site, choose its rule, block
+everything, install the Chrome extension, read the log. No terminal, ever.
+
+<details>
+<summary>For developers: run from the repository</summary>
 
 ```bash
-unzip sesame-macos.zip && cd sesame
-bash install.sh
+git clone https://github.com/sambisou/sesame && cd sesame
+npm install
+cd macos && ./scripts/make-app.sh release   # builds macos/build/Sésame.app
+npm run dmg                                 # builds the disk image
 ```
 
-`install.sh` installs the dependencies, makes the `sesame` command available, and registers the MCP server in Claude Code (`claude mcp add`) and Claude Desktop (`claude_desktop_config.json`, a `.bak-*` backup is kept). Restart Claude Desktop afterwards.
+`bin/sesame.js` is the CLI (`sesame doctor`, `sesame add`, `sesame install all`…). It needs Node 20+
+when run from the repository; the shipped app carries its own Node.
+</details>
 
 ### The "Sésame" Chrome
 

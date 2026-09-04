@@ -85,9 +85,9 @@
     "eyebrow": "How it works",
     "title": "Three gestures, and never again a password typed in front of Claude.",
     "step1Title": "Install Sésame",
-    "step1Body": "Download the archive, open it, and double-click “Install Sesame.” The installer introduces itself to Claude on its own and plants a small seed in the menu bar. The first time, macOS asks for a right-click then “Open.”",
+    "step1Body": "Download the disk image, drag Sésame into your Applications, and open it. A short setup connects it to Claude for you. A small seed appears in the menu bar: that is Sésame.",
     "step2Title": "Add a site",
-    "step2Body": "Click the seed, “Add a site,” type your username and password once. They go straight into Apple's Keychain, encrypted. Choose its rule: Automatic so you never have to approve again, or Ask me for sensitive sites.",
+    "step2Body": "Click the seed, “Add a site,” type your username and password once. They go straight into Apple's Keychain, encrypted. Choose its rule: Automatic so Claude logs in on its own, or Ask me for sensitive sites.",
     "step3Title": "Ask Claude",
     "step3Body": "On Automatic, Sésame fills the form in on its own in your browser: nothing to approve. On an “Ask me” site, a window asks for your go-ahead first. Claude carries on with its work.",
     "step3Say": "“Log into EDF and grab the August invoice.”"
@@ -207,12 +207,12 @@
   "dl": {
     "eyebrow": "Download",
     "title": "Open Sésame.",
-    "lede": "One app, one drag-and-drop, and Claude logs in for you. Without ever knowing how.",
+    "lede": "One disk image, one drag-and-drop, and Claude logs in for you. Without ever knowing how.",
     "cta": "Download Sésame for Mac",
     "versionLabel": "Version",
-    "versionValue": "0.6.0 · prototype, zip archive with the menu bar app",
+    "versionValue": "0.6.1 · Mac app, disk image",
     "reqLabel": "Requirements",
-    "reqValue": "macOS 13 or later, Google Chrome, Node.js 20 or later",
+    "reqValue": "macOS 13 or later, and Google Chrome. Nothing else to install.",
     "priceLabel": "Price",
     "priceValue": "Free, open source"
   },

@@ -30,6 +30,10 @@ final class Store {
     var locked = false
     var chromeUp = false
     var extensionStatus = ExtensionStatus()
+    /// État de la connexion à Claude Desktop / Claude Code (voir ClaudeConnect). `claudeStatusChecked` évite
+    /// d'afficher un diagnostic « pas connecté » avant la toute première sonde.
+    var claudeStatus = ClaudeConnect.Status()
+    var claudeStatusChecked = false
     var lastError: String?
     /// Sites dont l'élément Trousseau n'appartient pas à l'assistant (créés avant 0.5.1, ou par une autre
     /// application) : `migrateKeychain` les corrige. Voir checkMigration.
@@ -55,6 +59,7 @@ final class Store {
     var chromeProfile: URL { home.appendingPathComponent("chrome-profile") }
     var requestsDir: URL { home.appendingPathComponent("requests") }
     var aliveFile: URL { home.appendingPathComponent("bar.alive") }
+    var onboardedFile: URL { home.appendingPathComponent("onboarded") }
 
     func start() {
         reload()
@@ -72,6 +77,7 @@ final class Store {
         }
         t.resume()
         heartbeatTimer = t
+        checkFirstRun()
     }
 
     // MARK: lecture
@@ -84,12 +90,47 @@ final class Store {
         pollRequests()
         tick += 1
         if tick % 3 == 1 { refreshExtension() }   // toutes les 6 s : la sonde peut attendre jusqu'à une seconde
+        if tick % 5 == 2 { refreshClaudeStatus() } // toutes les 10 s : lit deux fichiers et lance `claude mcp list`
         if tick % 30 == 2 { checkMigration() }    // toutes les 60 s : dump-keychain -a est coûteux (gros Trousseau)
     }
 
     private var tick = 0
     private var probing = false
+    private var claudeProbing = false
     private var checkingMigration = false
+    private var onboardingChecked = false
+
+    /// Première ouverture (marqueur ~/.sesame/onboarded absent) : propose l'accueil en trois écrans, une
+    /// fois l'icône de la barre des menus en place. Voir Windows.showOnboarding.
+    func checkFirstRun() {
+        guard !onboardingChecked else { return }
+        onboardingChecked = true
+        guard !FileManager.default.fileExists(atPath: onboardedFile.path) else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+            guard let self else { return }
+            Windows.shared.showOnboarding(store: self)
+        }
+    }
+
+    func markOnboarded() {
+        try? FileManager.default.createDirectory(at: home, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        try? "\(ISO8601DateFormatter().string(from: Date()))\n".write(to: onboardedFile, atomically: true, encoding: .utf8)
+    }
+
+    /// Sonde la connexion à Claude Desktop / Claude Code hors du thread principal (fichiers + `claude mcp list`).
+    func refreshClaudeStatus() {
+        if claudeProbing { return }
+        claudeProbing = true
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let st = ClaudeConnect.probe()
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.claudeProbing = false
+                self.claudeStatusChecked = true
+                if st != self.claudeStatus { self.claudeStatus = st }
+            }
+        }
+    }
 
     /// Sonde l'extension Chrome hors du thread principal (manifeste, pont, extension).
     func refreshExtension() {

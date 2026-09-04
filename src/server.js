@@ -33,7 +33,7 @@ const text = obj => ({ content: [{ type: "text", text: typeof obj === "string" ?
 
 /** @param {string} [caller] nom de l'appelant journalisé (stdio : argument de ligne de commande ; HTTP : en-tête X-Sesame-Caller) */
 export function buildServer(caller = CALLER) {
-  const server = new McpServer({ name: "sesame", version: "0.6.0" });
+  const server = new McpServer({ name: "sesame", version: "0.6.1" });
 
   server.tool(
     "sesame_list_sites",

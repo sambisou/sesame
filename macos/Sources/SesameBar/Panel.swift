@@ -13,6 +13,7 @@ enum Palette {
 struct Panel: View {
     @Bindable var store: Store
     @State private var confirmRemove: Site?
+    @State private var claudeFixing = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -21,6 +22,7 @@ struct Panel: View {
             Divider().overlay(Palette.line)
             ScrollView {
                 VStack(spacing: 0) {
+                    if store.claudeStatusChecked && store.claudeStatus.anyInstalled && !store.claudeStatus.connected { claudeDiagnosticRow }
                     sectionTitle("Sites", trailing: "\(store.sites.count)")
                     if store.sites.isEmpty { emptyLine(t("panel_no_sites")) }
                     ForEach(store.sites) { s in siteRow(s) }
@@ -48,8 +50,10 @@ struct Panel: View {
     }
 
     private var listHeight: CGFloat {
+        let showDiag = store.claudeStatusChecked && store.claudeStatus.anyInstalled && !store.claudeStatus.connected
         let rows = CGFloat(store.sites.count) * 58 + (confirmRemove == nil ? 0 : 34) + CGFloat(min(visibleEvents.count, 8)) * 24 + 40 + 70 + (store.extensionStatus.level == 3 ? 56 : 84)
             + (store.sitesToMigrate.isEmpty ? 0 : (store.migrationReport == nil ? 34 : 52))
+            + (showDiag ? 34 : 0)
         return min(max(rows, 180), 620)
     }
 
@@ -67,8 +71,42 @@ struct Panel: View {
             Toggle(isOn: Binding(get: { store.locked }, set: { _ in store.toggleLock() })) { Text(t("panel_lock_toggle")).font(.system(size: 11)) }
                 .toggleStyle(.switch).controlSize(.mini).tint(Palette.no)
                 .help(t("panel_lock_help"))
+            Button { Windows.shared.showSettings(store: store) } label: { Image(systemName: "gearshape").font(.system(size: 12)) }
+                .buttonStyle(.plain).foregroundStyle(Palette.muted).help(t("panel_settings_help"))
         }
         .padding(.horizontal, 14).padding(.vertical, 10)
+    }
+
+    // MARK: diagnostic Claude
+
+    /// Sésame n'est pas (encore) connecté à Claude : soit il faut le déclarer, soit Claude Desktop tourne
+    /// encore avec l'ancienne configuration. Voir Store.refreshClaudeStatus / ClaudeConnect.
+    private var claudeDiagnosticRow: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "exclamationmark.triangle.fill").font(.system(size: 10)).foregroundStyle(Palette.wait)
+            Text(store.claudeStatus.needsRestartOnly ? t("diag_restart_needed") : t("diag_not_connected"))
+                .font(.system(size: 11)).foregroundStyle(Palette.muted).fixedSize(horizontal: false, vertical: true)
+            Spacer()
+            if claudeFixing {
+                ProgressView().controlSize(.mini)
+            } else {
+                Button(store.claudeStatus.needsRestartOnly ? t("diag_restart_button") : t("diag_repair_button")) { fixClaude() }.controlSize(.mini)
+            }
+        }
+        .padding(.horizontal, 14).padding(.vertical, 6)
+    }
+
+    private func fixClaude() {
+        claudeFixing = true
+        if store.claudeStatus.needsRestartOnly {
+            ClaudeConnect.restartDesktop()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) { claudeFixing = false; store.refreshClaudeStatus() }
+        } else {
+            DispatchQueue.global(qos: .userInitiated).async {
+                _ = ClaudeConnect.installAll()
+                DispatchQueue.main.async { claudeFixing = false; store.refreshClaudeStatus() }
+            }
+        }
     }
 
     // MARK: sites

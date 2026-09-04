@@ -2,7 +2,7 @@
 
 > 🇬🇧 [English README](README.md) · Site : [sesamekey.app](https://sesamekey.app) · Licence [MIT](LICENSE) · [Sécurité et signalement](SECURITY.fr.md)
 >
-> **Prototype personnel, fourni tel quel, sans garantie ni support.** Sésame manipule vos identifiants : lisez [SECURITY.md](SECURITY.md) avant de l'installer, et utilisez-le uniquement pour vos propres comptes, sous votre responsabilité.
+> Sésame manipule vos identifiants, autant savoir comment : [SECURITY.fr.md](SECURITY.fr.md) explique exactement ce qu'il fait, ce qu'il ne fait jamais, et où sont les limites. Gratuit et open source sous licence MIT, donc fourni sans garantie.
 
 Sésame permet à Claude (Cowork, Claude Code, Claude Desktop) de **se connecter à tes comptes web sans jamais connaître tes identifiants**.
 
@@ -34,16 +34,34 @@ Le principe : Claude ne demande pas *« donne-moi le mot de passe EDF »*, il de
 
 Il **n'existe aucun outil** qui renvoie un identifiant ou un mot de passe. Les secrets ne quittent jamais le processus Sésame ↔ Trousseau ↔ Chrome, tous sur ton Mac. Les messages d'erreur sont tronqués et ne contiennent jamais de valeur de champ.
 
-## Installation (5 minutes, sur le Mac mini)
+## Installation (deux minutes)
 
-Prérequis : macOS, Node.js ≥ 20 (`brew install node`), Google Chrome, Claude Desktop et/ou Claude Code.
+Prérequis : macOS 13 ou plus récent, et Google Chrome. Rien d'autre — Sésame emporte tout ce qu'il lui faut.
+
+1. Téléchargez **[Sesame.dmg](https://github.com/sambisou/sesame/releases/latest)**.
+2. Ouvrez-le et glissez **Sésame** dans votre dossier Applications.
+3. Ouvrez Sésame. Un court assistant le connecte à Claude, et une petite graine apparaît dans la barre
+   des menus.
+
+La première fois, macOS annonce une app d'un développeur non identifié : clic droit sur l'app →
+*Ouvrir* → *Ouvrir*. (Cet avertissement disparaîtra quand l'app sera notarisée par Apple.)
+
+Ensuite, tout se fait depuis la barre des menus : ajouter ou retirer un site, choisir sa règle, tout
+bloquer, installer l'extension Chrome, lire le journal. Jamais de terminal.
+
+<details>
+<summary>Pour les développeurs : depuis le dépôt</summary>
 
 ```bash
-unzip sesame.zip && cd sesame
-bash install.sh
+git clone https://github.com/sambisou/sesame && cd sesame
+npm install
+cd macos && ./scripts/make-app.sh release   # construit macos/build/Sésame.app
+npm run dmg                                 # construit l'image disque
 ```
 
-`install.sh` installe les dépendances, rend la commande `sesame` disponible, et déclare le serveur MCP dans Claude Code (`claude mcp add`) et dans Claude Desktop (`claude_desktop_config.json`, une sauvegarde `.bak-*` est faite). Redémarre Claude Desktop ensuite.
+`bin/sesame.js` est la CLI (`sesame doctor`, `sesame add`, `sesame install all`…). Elle demande Node 20+
+depuis le dépôt ; l'app distribuée, elle, embarque son propre Node.
+</details>
 
 ### Le Chrome « Sésame »
 

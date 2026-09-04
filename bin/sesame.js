@@ -20,6 +20,18 @@ import { lock, unlock, isLocked, assertPolicy } from "../src/policy.js";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const MCP_BIN = path.join(ROOT, "bin", "sesame-mcp.js");
+
+/**
+ * Ce CLI tourne-t-il depuis Sésame.app installé (macos/scripts/make-app.sh copie le serveur dans
+ * <App>/Contents/Resources/sesame) ? Détecté par la STRUCTURE du chemin (…/Contents/Resources/sesame),
+ * pas par un préfixe /Applications figé : l'app peut être dans ~/Applications ou ailleurs, seul compte
+ * qu'il s'agisse bien du bundle assemblé par make-app.sh. Renvoie le dossier Contents/MacOS du bundle
+ * (où vivent les lanceurs écrits par make-app.sh), ou null en développement (dépôt cloné).
+ */
+function bundleMacOSDir() {
+  const m = /^(.*\.app)[/\\]Contents[/\\]Resources[/\\]sesame$/.exec(ROOT);
+  return m ? path.join(m[1], "Contents", "MacOS") : null;
+}
 const [, , cmd, ...args] = process.argv;
 
 const HELP = `Sésame — coffre d'identifiants local pour Claude
@@ -353,7 +365,11 @@ const NATIVE_HOST_NAME = "app.sesamekey.bridge";
 const EXTENSION_ID_RE = /^[a-p]{32}$/;
 const BRIDGE_SOCKET = path.join(HOME, "bridge.sock");
 const EXTENSION_DIR = path.join(ROOT, "extension");
-const BRIDGE_SH = path.join(ROOT, "bin", "sesame-bridge.sh");
+// Lanceur que Chrome exécutera pour le pont natif : DANS Sésame.app une fois installé (écrit par
+// macos/scripts/make-app.sh, choisit tout seul le Node embarqué — voir bundleMacOSDir ci-dessus), sinon
+// le script de développement du dépôt (bin/sesame-bridge.sh, qui cherche un Node sur ce poste).
+const BUNDLE_MACOS_DIR = bundleMacOSDir();
+const BRIDGE_SH = BUNDLE_MACOS_DIR ? path.join(BUNDLE_MACOS_DIR, "sesame-bridge") : path.join(ROOT, "bin", "sesame-bridge.sh");
 
 /** Dossiers « NativeMessagingHosts » des navigateurs basés sur Chromium, sur macOS (clé = valeur de --browser). */
 function nativeMessagingDirs() {
@@ -400,8 +416,12 @@ function installExtension(id, browser = "chrome") {
     type: "stdio",
     allowed_origins: [`chrome-extension://${key}/`],
   };
-  // Chrome lance les hôtes natifs avec un PATH minimal : on fige le chemin du node courant pour bin/sesame-bridge.sh.
-  try { ensureHome(); fs.writeFileSync(path.join(HOME, "node-path"), process.execPath + "\n", { mode: 0o600 }); } catch {}
+  if (!BUNDLE_MACOS_DIR) {
+    // Chrome lance les hôtes natifs avec un PATH minimal : on fige le chemin du node courant pour
+    // bin/sesame-bridge.sh (dépôt de développement seulement — le lanceur du bundle choisit lui-même
+    // le Node embarqué selon l'architecture, il n'a besoin d'aucun chemin figé).
+    try { ensureHome(); fs.writeFileSync(path.join(HOME, "node-path"), process.execPath + "\n", { mode: 0o600 }); } catch {}
+  }
   // Le lanceur doit rester non modifiable par d'autres : Chrome exécute ce qui s'y trouve sans vérification.
   try { fs.chmodSync(BRIDGE_SH, 0o755); } catch {}
   fs.mkdirSync(target.dir, { recursive: true });
@@ -409,9 +429,15 @@ function installExtension(id, browser = "chrome") {
   fs.writeFileSync(file, JSON.stringify(manifest, null, 2) + "\n", { mode: 0o600 });
   try { fs.chmodSync(file, 0o600); } catch {} // un manifeste préexistant garde sinon son ancien mode
   logEvent({ action: "install_extension", caller: "cli", result: "ok", detail: `id ${key}, ${target.name}` });
-  console.log(`✅ ${target.name} : ${file} (0600)\n   Lanceur exécuté par ${target.name} : ${BRIDGE_SH}\n   Ce fichier et ce dépôt doivent rester à toi seul (chmod 755, hors dossier partagé) : ${target.name} l'exécute sans vérification.`);
-  if (/^\/Users\/[^/]+\/(Downloads|Documents|Desktop)\//.test(ROOT)) {
-    console.log(`\n⚠️  Ce dossier est dans ${ROOT.split("/")[3]} : macOS peut refuser à Chrome d'y exécuter le pont (« Native host has exited »).\n   Autorise Chrome pour ce dossier (Réglages Système → Confidentialité et sécurité → Fichiers et dossiers), ou déplace Sésame (ex. ~/sesame) et relance cette commande.`);
+  console.log(`✅ ${target.name} : ${file} (0600)\n   Lanceur exécuté par ${target.name} : ${BRIDGE_SH}\n   Ce fichier${BUNDLE_MACOS_DIR ? " (dans Sésame.app)" : " et ce dépôt"} doi${BUNDLE_MACOS_DIR ? "t" : "vent"} rester à toi seul (chmod 755, hors dossier partagé) : ${target.name} l'exécute sans vérification.`);
+  // macOS peut refuser à Chrome d'exécuter un script situé dans Téléchargements/Documents/Bureau (TCC
+  // « Fichiers et dossiers »). Le dossier à vérifier est celui qui contient VRAIMENT le lanceur : le
+  // bundle Sésame.app une fois installé, sinon le dépôt cloné.
+  const checkedPath = BUNDLE_MACOS_DIR ? path.dirname(BUNDLE_MACOS_DIR) /* .../Sésame.app/Contents */ : ROOT;
+  const restricted = /^\/Users\/[^/]+\/(Downloads|Documents|Desktop)\//.exec(checkedPath);
+  if (restricted) {
+    const what = BUNDLE_MACOS_DIR ? "Sésame.app" : "Ce dossier";
+    console.log(`\n⚠️  ${what} est dans ${restricted[0].split("/")[3]} : macOS peut refuser à Chrome d'y exécuter le pont (« Native host has exited »).\n   Autorise Chrome pour ce dossier (Réglages Système → Confidentialité et sécurité → Fichiers et dossiers)${BUNDLE_MACOS_DIR ? ", ou déplace Sésame.app dans Applications" : ", ou déplace Sésame (ex. ~/sesame)"} et relance cette commande.`);
   }
   console.log(`\nRecharge l'extension dans chrome://extensions (bouton ↻), puis « Tester la connexion » dans son popup.\nVérifie avec : sesame doctor`);
 }

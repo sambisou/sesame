@@ -12,6 +12,12 @@ struct SesameApp: App {
             SeedIcon.exportIconset(to: args[i + 1])
             exit(0)
         }
+        // `SesameBar --export-dmg-background <fichier.png>` : fond 640×400 de la fenêtre du .dmg (utilisé
+        // par macos/scripts/make-dmg.sh), puis quitte.
+        if let i = args.firstIndex(of: "--export-dmg-background"), i + 1 < args.count {
+            DMGBackground.export(to: args[i + 1])
+            exit(0)
+        }
         // Une seule graine dans la barre des menus, et c'est la version la plus récente qui survit :
         // une instance déjà en vie est priée de se terminer (réinstallation), la nouvelle prend sa place.
         let me = ProcessInfo.processInfo.processIdentifier
@@ -19,6 +25,27 @@ struct SesameApp: App {
         for o in others { o.terminate() }
         if !others.isEmpty { usleep(600_000) }
         for o in others where !o.isTerminated { o.forceTerminate() }
+
+        // Première ouverture seulement (marqueur ~/.sesame/dequarantined) : retire com.apple.quarantine du
+        // bundle, pour que Chrome (pont natif) et l'app elle-même puissent exécuter les lanceurs et
+        // l'assistant Trousseau embarqués sans nouvelle alerte Gatekeeper. Repose sur ce qu'a déjà validé
+        // le clic droit → Ouvrir (voir « Read me first.txt » dans le .dmg) ; simple confort ensuite.
+        DispatchQueue.global(qos: .utility).async { Self.removeQuarantineOnce() }
+    }
+
+    private static func removeQuarantineOnce() {
+        let home = URL(fileURLWithPath: ProcessInfo.processInfo.environment["SESAME_HOME"] ?? (NSHomeDirectory() + "/.sesame"))
+        let marker = home.appendingPathComponent("dequarantined")
+        guard !FileManager.default.fileExists(atPath: marker.path) else { return }
+        let bundlePath = Bundle.main.bundleURL.path
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/xattr")
+        p.arguments = ["-dr", "com.apple.quarantine", bundlePath]
+        p.standardOutput = Pipe(); p.standardError = Pipe()
+        try? p.run()
+        p.waitUntilExit()
+        try? FileManager.default.createDirectory(at: home, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        try? "\(ISO8601DateFormatter().string(from: Date()))\n".write(to: marker, atomically: true, encoding: .utf8)
     }
 
     var body: some Scene {

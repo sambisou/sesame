@@ -20,9 +20,16 @@ import { KEYCHAIN_SERVICE } from "./config.js";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
-/** Chemins où chercher l'assistant Trousseau signé, dans l'ordre : app installée, puis build local du dépôt. */
+/**
+ * Chemins où chercher l'assistant Trousseau signé, dans l'ordre :
+ * 1. le paquet DANS LEQUEL ce code s'exécute (Contents/Resources/sesame/src → Contents/MacOS) : c'est
+ *    toujours le bon quand l'app est installée, déplacée, ou lancée depuis un disque monté ;
+ * 2. l'app installée dans /Applications (cas du dépôt de développement) ;
+ * 3. le build local du dépôt.
+ */
 function helperCandidates() {
   return [
+    path.resolve(HERE, "..", "..", "..", "MacOS", "sesame-keychain"),
     "/Applications/Sésame.app/Contents/MacOS/sesame-keychain",
     path.join(HERE, "..", "macos", "build", "Sésame.app", "Contents", "MacOS", "sesame-keychain"),
   ];

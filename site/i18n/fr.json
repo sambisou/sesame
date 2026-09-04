@@ -85,9 +85,9 @@
     "eyebrow": "Comment ça marche",
     "title": "Trois gestes, et plus jamais un mot de passe à taper devant Claude.",
     "step1Title": "Installez Sésame",
-    "step1Body": "Téléchargez l'archive, ouvrez-la, et double-cliquez sur « Install Sesame ». L'installateur se présente à Claude tout seul et pose une petite graine dans la barre des menus. La première fois, macOS demande un clic droit puis « Ouvrir ».",
+    "step1Body": "Téléchargez l'image disque, glissez Sésame dans vos Applications, et ouvrez-la. Un court assistant la connecte à Claude pour vous. Une petite graine apparaît dans la barre des menus : c'est Sésame.",
     "step2Title": "Ajoutez un site",
-    "step2Body": "Cliquez sur la graine, « Ajouter un site », tapez votre identifiant et votre mot de passe une seule fois. Ils partent dans le Trousseau d'Apple, chiffrés. Choisissez sa règle : Automatique pour ne plus rien valider, ou Me demander pour les sites sensibles.",
+    "step2Body": "Cliquez la graine, « Ajouter un site », tapez votre identifiant et votre mot de passe une seule fois. Ils partent dans le Trousseau d'Apple, chiffrés. Choisissez sa règle : Automatique pour que Claude se connecte tout seul, ou Me demander pour un site sensible.",
     "step3Title": "Demandez à Claude",
     "step3Body": "En Automatique, Sésame remplit le formulaire tout seul dans votre navigateur : rien à valider. Sur un site « Me demander », une fenêtre vous demande votre accord d'abord. Claude continue son travail.",
     "step3Say": "« Connecte-toi sur EDF et récupère la facture d'août. »"
@@ -206,12 +206,12 @@
   "dl": {
     "eyebrow": "Téléchargement",
     "title": "Ouvrez Sésame.",
-    "lede": "Une application, un glisser-déposer, et Claude se connecte pour vous. Sans jamais savoir comment.",
+    "lede": "Une image disque, un glisser-déposer, et Claude se connecte pour vous. Sans jamais savoir comment.",
     "cta": "Télécharger Sésame pour Mac",
     "versionLabel": "Version",
-    "versionValue": "0.6.0 · prototype, archive zip avec l'app de la barre des menus",
+    "versionValue": "0.6.1 · application Mac, image disque",
     "reqLabel": "Prérequis",
-    "reqValue": "macOS 13 ou plus récent, Google Chrome, Node.js 20 ou plus récent",
+    "reqValue": "macOS 13 ou plus récent, et Google Chrome. Rien d'autre à installer.",
     "priceLabel": "Prix",
     "priceValue": "Gratuit, code ouvert"
   },

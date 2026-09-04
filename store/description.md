@@ -4,9 +4,10 @@ Tout ce qu'il faut coller dans le formulaire de soumission (developer.chrome.com
 et en anglais, plus la justification de chaque permission (le formulaire de revue Google demande une
 phrase par permission) et la procédure de publication pas à pas.
 
-L'extension seule ne fait rien sans le reste de Sésame (serveur MCP + pont natif) installé sur le même
-Mac : ne pas s'attendre à des installations grand public tant que ce n'est pas le cas, c'est un projet
-personnel. Voir [README.md](../README.md) et [SECURITY.md](../SECURITY.md).
+L'extension travaille avec l'application Sésame, à installer sur le même Mac (téléchargement gratuit sur
+[sesamekey.app](https://sesamekey.app) : on glisse l'app dans Applications, on l'ouvre, elle fait le
+reste). C'est le prérequis à annoncer clairement dans la fiche. Voir [README.md](../README.md) et
+[SECURITY.md](../SECURITY.md).
 
 ---
 
@@ -51,8 +52,8 @@ Ce que l'extension ne fait jamais :
 
 **Prérequis :** cette extension seule ne suffit pas. Elle a besoin du reste de Sésame (serveur MCP + pont
 natif) installé sur le même Mac — voir [sesamekey.app](https://sesamekey.app) et le dépôt
-[github.com/sambisou/sesame](https://github.com/sambisou/sesame). C'est un projet personnel, gratuit,
-open source (MIT), fourni sans garantie.
+[github.com/sambisou/sesame](https://github.com/sambisou/sesame). Sésame est gratuit et open source
+(licence MIT).
 
 Politique de confidentialité : [sesamekey.app/privacy.html](https://sesamekey.app/privacy.html).
 

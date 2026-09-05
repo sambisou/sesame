@@ -118,12 +118,14 @@
     "today2": "Il reste en arrière-plan pendant la connexion et ne se déplie que si un site attend un code de votre part.",
     "today3": "Vos sessions y restent ouvertes : une fois connecté à EDF, plus besoin de Sésame jusqu'à expiration.",
     "today4": "Rien d'autre n'y est installé : aucune extension tierce ne peut y observer ce que Sésame tape.",
-    "extTitle": "Disponible : l'extension, dans votre Chrome habituel",
-    "ext1": "L'extension Sésame (bêta) remplit le formulaire directement dans votre Chrome de tous les jours. Plus de fenêtre à part.",
-    "ext2": "Installation depuis la graine : menu Sésame → « Navigateur » → « Installer… ». Sésame ouvre <code>chrome://extensions</code> et active le mode développeur pour vous.",
-    "ext3": "Chargez le dossier <code>extension/</code>, copiez l'ID affiché sous son nom, collez-le dans Sésame et cliquez « Relier ».",
+    "extTitle": "L'extension, dans votre Chrome habituel",
+    "ext1": "L'extension Sésame remplit le formulaire directement dans votre Chrome de tous les jours : plus de seconde fenêtre. Trois étapes, deux minutes.",
     "ext4": "Elle reçoit les identifiants par le canal de messagerie native de Chrome, un tuyau local entre l'extension et Sésame. Rien ne passe par le réseau, l'extension ne stocke rien. Sésame la choisit dès qu'elle répond, sinon le Chrome à part.",
-    "ext5": "Limite honnête : dans votre Chrome habituel, une autre extension ayant accès à la page pourrait observer la frappe, comme elle pourrait vous observer vous-même. Le Chrome dédié n'a pas cette exposition. À vous de choisir."
+    "ext5": "À savoir : dans votre Chrome habituel, une autre extension ayant accès à la page pourrait observer la frappe, comme elle pourrait vous observer vous-même. Le Chrome Sésame, lui, n'héberge rien d'autre.",
+    "extStep1": "Ajoutez l'extension depuis le Chrome Web Store, avec le bouton ci-dessous.",
+    "extStep2": "Cliquez la graine dans la barre des menus, puis « Navigateur » et « Installer… ». Sésame vous montre l'identifiant de l'extension à coller, et se relie à elle.",
+    "extStep3": "C'est tout. La ligne « Navigateur » passe au vert et Sésame se connecte désormais dans votre Chrome habituel.",
+    "extCta": "Ajouter à Chrome"
   },
   "security": {
     "eyebrow": "Sécurité",

@@ -9,6 +9,13 @@ const I18N_DIR = path.join(SITE, "i18n");
 const DIST_DIR = path.join(SITE, "dist");
 const SITE_URL = "https://sesamekey.app";
 const DEFAULT_LANG = "en";
+// Adresse de l'extension sur le Chrome Web Store. Tant que la fiche n'est pas publiée, on pointe la
+// recherche du Store (page réelle, jamais un lien mort) ; dès qu'on a l'identifiant de l'article,
+// il suffit de le poser ici (ou dans SESAME_WEBSTORE_ID) pour que tous les boutons suivent.
+const WEBSTORE_ID = process.env.SESAME_WEBSTORE_ID || "";
+const WEBSTORE_URL = WEBSTORE_ID
+  ? `https://chromewebstore.google.com/detail/${WEBSTORE_ID}`
+  : "https://chromewebstore.google.com/search/S%C3%A9same";
 
 // Table des deux langues visées ; le build ne génère que celles qui ont un
 // site/i18n/<code>.json, mais les balises hreflang des deux sont posées
@@ -98,6 +105,14 @@ for (const f of fs.readdirSync(path.join(SITE, "img"))) {
   fs.copyFileSync(path.join(SITE, "img", f), path.join(DIST_DIR, "img", f));
 }
 
+/** Capture localisée si elle existe (img/panneau.fr.png), sinon la capture par défaut. */
+function localizeImages(html, langCode) {
+  return html.replace(/\/img\/([a-z0-9-]+)\.png/g, (m, name) => {
+    const localized = `${name}.${langCode}.png`;
+    return fs.existsSync(path.join(SITE, "img", localized)) ? `/img/${localized}` : m;
+  });
+}
+
 const template = fs.readFileSync(path.join(SITE, "template.html"), "utf8");
 const availableCodes = LANGS.filter((l) => dicts[l.code]).map((l) => l.code);
 const redirectCandidates = availableCodes.filter((c) => c !== DEFAULT_LANG);
@@ -108,6 +123,7 @@ for (const lang of LANGS) {
   if (!dict) continue; // langue pas encore traduite : pas de page construite
 
   const flat = flatten(dict);
+  flat["link.webstore"] = WEBSTORE_URL;
 
   // 1) marqueurs de construction (littéraux, pas des clés i18n strictes)
   let html = template;
@@ -133,6 +149,7 @@ for (const lang of LANGS) {
 
   // 2) contenu i18n proprement dit : {{clé.pointée}} -> texte traduit
   html = renderI18n(html, flat, lang.code);
+  html = localizeImages(html, lang.code);
 
   const head = `<!doctype html>
 <html lang="${lang.htmlLang}">

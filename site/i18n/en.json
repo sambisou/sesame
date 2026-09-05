@@ -119,12 +119,14 @@
     "today2": "It stays in the background during login and only expands if a site is waiting for a code from you.",
     "today3": "Your sessions stay open there: once you're logged into EDF, Sésame isn't needed again until it expires.",
     "today4": "Nothing else is installed there: no third-party extension can watch what Sésame types.",
-    "extTitle": "Available: the extension, in your everyday Chrome",
-    "ext1": "The Sésame extension (beta) fills the form directly in your everyday Chrome. No more separate window.",
-    "ext2": "Install it from the seed: Sésame menu → “Browser” → “Install…” Sésame opens <code>chrome://extensions</code> and turns on developer mode for you.",
-    "ext3": "Load the <code>extension/</code> folder, copy the ID shown under its name, paste it into Sésame, and click “Link.”",
+    "extTitle": "The extension, in your everyday Chrome",
+    "ext1": "The Sésame extension fills the form straight into the Chrome you use every day: no second window. Three steps, two minutes.",
     "ext4": "It receives credentials through Chrome's native messaging channel, a local pipe between the extension and Sésame. Nothing goes over the network, the extension stores nothing. Sésame prefers it as soon as it responds, and falls back to the separate Chrome otherwise.",
-    "ext5": "An honest limit: in your everyday Chrome, another extension with access to the page could in theory watch the keystrokes, just as it could watch you typing yourself. The dedicated Chrome doesn't have that exposure. Your choice."
+    "ext5": "Worth knowing: in your everyday Chrome, another extension with access to the page could watch the typing, just as it could watch you type it yourself. The Sésame Chrome hosts nothing else.",
+    "extStep1": "Add the extension from the Chrome Web Store, with the button below.",
+    "extStep2": "Click the seed in the menu bar, then “Browser” and “Install…”. Sésame shows you the extension ID to paste, and connects to it.",
+    "extStep3": "That's it. The “Browser” line turns green and Sésame now logs in inside your everyday Chrome.",
+    "extCta": "Add to Chrome"
   },
   "security": {
     "eyebrow": "Security",

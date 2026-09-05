@@ -223,10 +223,27 @@
   /* Screenshots */
   .shots { display: grid; grid-template-columns: 1fr 1fr; gap: 28px; margin-top: 48px; }
   @media (max-width: 800px) { .shots { grid-template-columns: 1fr; } }
-  .shot { margin: 0; border: 1px solid var(--line); border-radius: 18px; background: var(--card); padding: 18px; display: flex; flex-direction: column; gap: 14px; }
-  .shot img { width: 100%; height: auto; border-radius: 10px; border: 1px solid var(--line); background: var(--bg-2); }
+  .shot { margin: 0; border: 1px solid var(--line); border-radius: 18px; background: var(--card); padding: 18px; display: flex; flex-direction: column; gap: 16px; }
+  /* Une scène de hauteur fixe : les captures hautes (le panneau) et larges (le bandeau) tiennent
+     ensemble sans trou blanc, chacune centrée et jamais rognée. */
+  .shot .stage { height: 268px; display: grid; place-items: center; overflow: hidden; padding: 18px;
+    border-radius: 14px; background: linear-gradient(160deg, var(--bg-2), color-mix(in srgb, var(--seed-soft) 55%, var(--bg-2))); }
+  .shot .stage img { max-width: 100%; max-height: 100%; min-width: 0; min-height: 0; width: auto; height: auto;
+    object-fit: contain; border-radius: 8px; box-shadow: 0 1px 2px rgba(26,23,20,.10), 0 14px 30px -14px rgba(26,23,20,.45); }
+  /* Capture plus haute que large (le panneau) : on la cadre en haut, à taille lisible, et le bas s'estompe. */
+  .shot .stage--tall { place-items: start center; padding-bottom: 0; }
+  .shot .stage--tall img { max-height: none; width: 262px; -webkit-mask-image: linear-gradient(180deg, #000 76%, transparent);
+    mask-image: linear-gradient(180deg, #000 76%, transparent); }
+  @media (max-width: 800px) { .shot .stage { height: 230px; padding: 14px; } }
   .shot figcaption { font-size: .95rem; color: var(--ink-2); line-height: 1.5; }
   .shot figcaption b { color: var(--ink); }
+
+  /* Marche à suivre courte, dans un panneau */
+  .steps-inline { counter-reset: st; list-style: none; margin: 0 0 18px; padding: 0; display: grid; gap: 10px; }
+  .steps-inline li { counter-increment: st; display: flex; gap: 12px; align-items: flex-start; color: var(--ink-2); min-width: 0; }
+  .steps-inline li::before { content: counter(st); flex: none; width: 22px; height: 22px; border-radius: 50%; background: var(--seed-soft); color: var(--seed-2); font-size: .8rem; font-weight: 700; display: grid; place-items: center; }
+  .btn-store { padding: 12px 20px; font-size: .95rem; }
+  .btn-store svg { width: 18px; height: 18px; }
 
   /* Security */
   .sec-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 64px; align-items: start; margin-top: 12px; }
@@ -492,19 +509,19 @@
     {{FLOW_LANG_NOTE}}
     <div class="shots">
       <figure class="shot">
-        <img src="/img/panneau.png" alt="{{flow.shot1Alt}}" loading="lazy">
+        <div class="stage stage--tall"><img src="/img/panneau.png" alt="{{flow.shot1Alt}}" loading="lazy"></div>
         <figcaption><b>{{flow.shot1Title}}</b> {{flow.shot1Body}}</figcaption>
       </figure>
       <figure class="shot">
-        <img src="/img/fenetre-identifiants.png" alt="{{flow.shot2Alt}}" loading="lazy">
+        <div class="stage"><img src="/img/fenetre-identifiants.png" alt="{{flow.shot2Alt}}" loading="lazy"></div>
         <figcaption><b>{{flow.shot2Title}}</b> {{flow.shot2Body}}</figcaption>
       </figure>
       <figure class="shot">
-        <img src="/img/dialogue-acces.png" alt="{{flow.shot3Alt}}" loading="lazy">
+        <div class="stage"><img src="/img/dialogue-acces.png" alt="{{flow.shot3Alt}}" loading="lazy"></div>
         <figcaption><b>{{flow.shot3Title}}</b> {{flow.shot3Body}}</figcaption>
       </figure>
       <figure class="shot">
-        <img src="/img/bandeau-code.png" alt="{{flow.shot4Alt}}" loading="lazy">
+        <div class="stage"><img src="/img/bandeau-code.png" alt="{{flow.shot4Alt}}" loading="lazy"></div>
         <figcaption><b>{{flow.shot4Title}}</b> {{flow.shot4Body}}</figcaption>
       </figure>
     </div>
@@ -528,13 +545,17 @@
       </div>
       <div class="panel">
         <h3>{{chrome.extTitle}}</h3>
-        <ul>
-          <li>{{chrome.ext1}}</li>
-          <li><span>{{chrome.ext2}}</span></li>
-          <li><span>{{chrome.ext3}}</span></li>
-          <li>{{chrome.ext4}}</li>
-          <li>{{chrome.ext5}}</li>
-        </ul>
+        <p style="color:var(--ink-2);margin-bottom:14px">{{chrome.ext1}}</p>
+        <ol class="steps-inline">
+          <li><span>{{chrome.extStep1}}</span></li>
+          <li><span>{{chrome.extStep2}}</span></li>
+          <li><span>{{chrome.extStep3}}</span></li>
+        </ol>
+        <a class="btn btn-primary btn-store" href="{{link.webstore}}" rel="noopener" target="_blank">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 1 7.8 4.5H12"/><path d="M8.2 7.5 4.4 14"/><path d="M12 21a9 9 0 0 0 4.4-16.5"/><circle cx="12" cy="12" r="3.2"/></svg>
+          {{chrome.extCta}}
+        </a>
+        <p style="font-size:.9rem;color:var(--ink-3);margin-top:12px">{{chrome.ext5}}</p>
       </div>
     </div>
   </div>

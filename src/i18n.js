@@ -7,6 +7,10 @@ import { execFileSync } from "node:child_process";
 let cachedLang = null;
 
 function detectLang() {
+  // SESAME_LANG force la langue (tests, captures d'écran du site) ; sinon, celle du Mac.
+  const forced = String(process.env.SESAME_LANG || "").toLowerCase();
+  if (forced.startsWith("fr")) return "fr";
+  if (forced.startsWith("en")) return "en";
   if (process.platform === "darwin") {
     try {
       const out = execFileSync("/usr/bin/defaults", ["read", "-g", "AppleLanguages"], { encoding: "utf8", timeout: 2000 });

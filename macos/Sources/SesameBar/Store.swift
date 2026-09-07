@@ -40,6 +40,8 @@ final class Store {
     var sitesToMigrate: [String] = []
     var migrating = false
     var migrationReport: String?
+    /// Questions en attente d'une réponse de l'utilisateur (fenêtre flottante + rangée dans le panneau).
+    var asks: [AccessRequest] = []
 
     let home: URL
     private var raw: [String: Any] = [:]
@@ -47,6 +49,7 @@ final class Store {
     private var heartbeatTimer: DispatchSourceTimer?
     private let service = ProcessInfo.processInfo.environment["SESAME_KEYCHAIN_SERVICE"] ?? "sesame"
     private var shownRequests: Set<String> = []
+    private var asksWatcher: DispatchSourceFileSystemObject?
 
     init() {
         let env = ProcessInfo.processInfo.environment["SESAME_HOME"]
@@ -58,6 +61,7 @@ final class Store {
     var lockFile: URL { home.appendingPathComponent("LOCKED") }
     var chromeProfile: URL { home.appendingPathComponent("chrome-profile") }
     var requestsDir: URL { home.appendingPathComponent("requests") }
+    var asksDir: URL { home.appendingPathComponent("asks") }
     var aliveFile: URL { home.appendingPathComponent("bar.alive") }
     var onboardedFile: URL { home.appendingPathComponent("onboarded") }
 
@@ -77,7 +81,21 @@ final class Store {
         }
         t.resume()
         heartbeatTimer = t
+        watchAsks()
         checkFirstRun()
+    }
+
+    /// Une question déposée par le serveur doit apparaître tout de suite, pas au prochain tour de la
+    /// minuterie : on surveille le dossier ~/.sesame/asks lui-même.
+    private func watchAsks() {
+        try? FileManager.default.createDirectory(at: asksDir, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        let fd = open(asksDir.path, O_EVTONLY)
+        guard fd >= 0 else { return }
+        let src = DispatchSource.makeFileSystemObjectSource(fileDescriptor: fd, eventMask: [.write], queue: DispatchQueue.main)
+        src.setEventHandler { [weak self] in self?.pollAsks() }
+        src.setCancelHandler { close(fd) }
+        src.resume()
+        asksWatcher = src
     }
 
     // MARK: lecture
@@ -88,6 +106,7 @@ final class Store {
         loadJournal()
         checkChrome()
         pollRequests()
+        pollAsks()
         tick += 1
         if tick % 3 == 1 { refreshExtension() }   // toutes les 6 s : la sonde peut attendre jusqu'à une seconde
         if tick % 5 == 2 { refreshClaudeStatus() } // toutes les 10 s : lit deux fichiers et lance `claude mcp list`
@@ -307,6 +326,53 @@ final class Store {
                                 caller: o["caller"] as? String ?? "Claude", ts: ts, extraDomains: (o["extraDomains"] as? [String]) ?? [])
             Task { @MainActor in Windows.shared.showRequest(r, store: self) }
         }
+    }
+
+    /// Questions posées par le serveur (demande d'accès, nouveau domaine) : une fenêtre flottante par question,
+    /// une seule fois ; quand le serveur retire sa question (délai écoulé, ou réponse consommée), la fenêtre
+    /// se ferme d'elle-même.
+    private func pollAsks() {
+        let names = (try? FileManager.default.contentsOfDirectory(atPath: asksDir.path)) ?? []
+        let iso = ISO8601DateFormatter(); iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let iso2 = ISO8601DateFormatter()
+        var live: Set<String> = []
+        for n in names where n.hasSuffix(".json") && !n.hasSuffix(".done.json") {
+            let file = asksDir.appendingPathComponent(n)
+            let id = String(n.dropLast(5))
+            // Orphelin (serveur parti sans nettoyer) : au-delà de dix minutes, on l'efface.
+            if let attrs = try? FileManager.default.attributesOfItem(atPath: file.path), let m = attrs[.modificationDate] as? Date, Date().timeIntervalSince(m) > 600 {
+                try? FileManager.default.removeItem(at: file); continue
+            }
+            if FileManager.default.fileExists(atPath: asksDir.appendingPathComponent(id + ".done.json").path) { continue }
+            live.insert(id)
+            if asks.contains(where: { $0.id == id }) { continue }
+            guard let d = try? Data(contentsOf: file),
+                  let o = try? JSONSerialization.jsonObject(with: d) as? [String: Any] else { continue }
+            let ts = (o["ts"] as? String).flatMap { iso.date(from: $0) ?? iso2.date(from: $0) } ?? Date()
+            let r = AccessRequest(id: id, kind: o["kind"] as? String ?? "generic", site: o["site"] as? String ?? "",
+                                  domain: o["domain"] as? String ?? "", caller: o["caller"] as? String ?? "Claude",
+                                  reason: o["reason"] as? String ?? "", channel: o["channel"] as? String ?? "",
+                                  title: o["title"] as? String ?? "", message: o["message"] as? String ?? "",
+                                  okLabel: o["okLabel"] as? String ?? "", cancelLabel: o["cancelLabel"] as? String ?? "",
+                                  offerAlways: o["offerAlways"] as? Bool ?? false, ts: ts)
+            asks.append(r)
+            Task { @MainActor in Windows.shared.showAsk(r, store: self) }
+        }
+        // Questions retirées par le serveur : plus rien à répondre, la fenêtre se ferme.
+        for gone in asks.filter({ !live.contains($0.id) }) {
+            asks.removeAll { $0.id == gone.id }
+            Task { @MainActor in Windows.shared.closeAsk(gone.id) }
+        }
+    }
+
+    /// Réponse à une question : le serveur l'attend dans <id>.done.json. Idempotent : la première réponse compte.
+    func resolveAsk(_ id: String, allowed: Bool, always: Bool) {
+        let done = asksDir.appendingPathComponent(id + ".done.json")
+        asks.removeAll { $0.id == id }
+        Task { @MainActor in Windows.shared.closeAsk(id) }
+        if FileManager.default.fileExists(atPath: done.path) { return }
+        let o: [String: Any] = ["allowed": allowed, "always": always, "ts": ISO8601DateFormatter().string(from: Date())]
+        if let d = try? JSONSerialization.data(withJSONObject: o) { try? d.write(to: done, options: .atomic) }
     }
 
     /// Réponse à une demande : le serveur MCP attend ce fichier. Idempotent : la première réponse compte.

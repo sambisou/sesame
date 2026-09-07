@@ -30,6 +30,52 @@ final class Windows: NSObject, NSWindowDelegate {
         }
     }
 
+    /// Demande d'accès : fenêtre flottante (au-dessus de tout), présente sur tous les bureaux et au-dessus d'une
+    /// app en plein écran, posée sous la barre des menus à droite, et — c'est le point — SANS activer Sésame :
+    /// si l'utilisateur est en train de taper un code dans Chrome, le clavier lui reste. Il clique quand il veut.
+    /// Plusieurs demandes à la fois : elles se décalent en cascade au lieu de se recouvrir.
+    func showAsk(_ r: AccessRequest, store: Store) {
+        let key = "ask-" + r.id
+        if let w = open[key] { w.orderFrontRegardless(); return }
+        let host = NSHostingController(rootView: AccessRequestView(request: r) { allowed, always in
+            store.resolveAsk(r.id, allowed: allowed, always: always)
+        })
+        let w = NSWindow(contentViewController: host)
+        w.title = r.kind == "domain" ? t("win_ask_domain_title") : t("win_ask_title")
+        w.styleMask = [.titled, .closable]
+        w.isReleasedWhenClosed = false
+        w.level = .floating
+        w.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        w.hidesOnDeactivate = false
+        w.delegate = self
+        open[key] = w
+        // Bouton rouge : vaut « Refuser ».
+        onClose[key] = { store.resolveAsk(r.id, allowed: false, always: false) }
+        placeUnderMenuBar(w, index: open.keys.filter { $0.hasPrefix("ask-") }.count - 1)
+        w.orderFrontRegardless()
+    }
+
+    /// Ferme la fenêtre d'une question (répondue, ou retirée par le serveur) sans rappeler le serveur.
+    func closeAsk(_ id: String) { close("ask-" + id) }
+
+    /// Ramène toutes les questions en attente au premier plan (depuis le panneau : « Afficher »).
+    func frontAsks() {
+        for (k, w) in open where k.hasPrefix("ask-") { w.orderFrontRegardless() }
+    }
+
+    /// Coin haut droit de l'écran où est la souris (celui que l'utilisateur regarde), sous la barre des menus,
+    /// décalé en cascade pour la n-ième fenêtre.
+    private func placeUnderMenuBar(_ w: NSWindow, index: Int) {
+        let mouse = NSEvent.mouseLocation
+        let screen = NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) } ?? NSScreen.main ?? NSScreen.screens[0]
+        let v = screen.visibleFrame
+        let size = w.frame.size
+        let step = CGFloat(min(index, 6)) * 28
+        let x = v.maxX - size.width - 16 - step
+        let y = v.maxY - size.height - 12 - step
+        w.setFrameOrigin(NSPoint(x: max(v.minX + 8, x), y: max(v.minY + 8, y)))
+    }
+
     func showAdd(store: Store) {
         show(key: "add", title: t("win_add_site_title"), store: store, request: nil) { _ in }
     }

@@ -22,6 +22,10 @@ struct Panel: View {
             Divider().overlay(Palette.line)
             ScrollView {
                 VStack(spacing: 0) {
+                    if !store.asks.isEmpty {
+                        sectionTitle(t("panel_asks"), trailing: "\(store.asks.count)")
+                        ForEach(store.asks) { a in askRow(a) }
+                    }
                     if store.claudeStatusChecked && store.claudeStatus.anyInstalled && !store.claudeStatus.connected { claudeDiagnosticRow }
                     sectionTitle("Sites", trailing: "\(store.sites.count)")
                     if store.sites.isEmpty { emptyLine(t("panel_no_sites")) }
@@ -51,9 +55,14 @@ struct Panel: View {
 
     private var listHeight: CGFloat {
         let showDiag = store.claudeStatusChecked && store.claudeStatus.anyInstalled && !store.claudeStatus.connected
-        let rows = CGFloat(store.sites.count) * 58 + (confirmRemove == nil ? 0 : 34) + CGFloat(min(visibleEvents.count, 8)) * 24 + 40 + 70 + (store.extensionStatus.level == 3 ? 56 : 84)
-            + (store.sitesToMigrate.isEmpty ? 0 : (store.migrationReport == nil ? 34 : 52))
-            + (showDiag ? 34 : 0)
+        var rows: CGFloat = 40 + 70
+        rows += CGFloat(store.sites.count) * 58
+        rows += confirmRemove == nil ? 0 : 34
+        rows += CGFloat(min(visibleEvents.count, 8)) * 24
+        rows += store.extensionStatus.level == 3 ? 56 : 84
+        rows += store.sitesToMigrate.isEmpty ? 0 : (store.migrationReport == nil ? 34 : 52)
+        rows += showDiag ? 34 : 0
+        rows += store.asks.isEmpty ? 0 : 30 + CGFloat(store.asks.count) * 46
         return min(max(rows, 180), 620)
     }
 
@@ -75,6 +84,31 @@ struct Panel: View {
                 .buttonStyle(.plain).foregroundStyle(Palette.muted).help(t("panel_settings_help"))
         }
         .padding(.horizontal, 14).padding(.vertical, 10)
+    }
+
+    // MARK: questions en attente
+
+    /// Une demande d'accès qu'on n'a pas encore tranchée : on peut répondre d'ici même, ou ramener sa fenêtre
+    /// (elle flotte au-dessus des autres, mais on la retrouve toujours ici).
+    private func askRow(_ a: AccessRequest) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 8) {
+                Circle().fill(Palette.wait).frame(width: 7, height: 7)
+                Text(a.heading).font(.system(size: 12, weight: .semibold)).lineLimit(1)
+                Spacer()
+                Button { Windows.shared.frontAsks() } label: { Image(systemName: "macwindow.on.rectangle").font(.system(size: 11)) }
+                    .buttonStyle(.plain).foregroundStyle(Palette.muted).help(t("ask_show_help"))
+            }
+            HStack(spacing: 8) {
+                Text(a.kind == "access" ? t("ask_row_detail", a.caller, a.domain) : a.message)
+                    .font(.system(size: 10.5)).foregroundStyle(Palette.muted).lineLimit(1)
+                Spacer()
+                Button(a.cancelLabel.isEmpty ? t("ask_deny") : a.cancelLabel) { store.resolveAsk(a.id, allowed: false, always: false) }.controlSize(.mini)
+                Button(a.okLabel.isEmpty ? t("ask_allow") : a.okLabel) { store.resolveAsk(a.id, allowed: true, always: false) }
+                    .controlSize(.mini).buttonStyle(.borderedProminent)
+            }
+        }
+        .padding(.horizontal, 14).padding(.vertical, 6)
     }
 
     // MARK: diagnostic Claude

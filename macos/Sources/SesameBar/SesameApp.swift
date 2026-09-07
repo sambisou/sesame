@@ -52,7 +52,7 @@ struct SesameApp: App {
         MenuBarExtra {
             Panel(store: store)
         } label: {
-            Image(nsImage: SeedIcon.menuBar(alert: store.locked))
+            Image(nsImage: SeedIcon.menuBar(alert: store.locked, pending: !store.asks.isEmpty))
                 .onAppear { store.start() }
         }
         .menuBarExtraStyle(.window)
@@ -85,7 +85,8 @@ enum SeedIcon {
         }
     }
 
-    static func menuBar(alert: Bool, size: CGFloat = 18) -> NSImage {
+    /// `pending` : une question attend l'utilisateur — un point en bas à droite de la graine le signale.
+    static func menuBar(alert: Bool, pending: Bool = false, size: CGFloat = 18) -> NSImage {
         let image = NSImage(size: NSSize(width: size, height: size), flipped: false) { rect in
             guard let ctx = NSGraphicsContext.current?.cgContext else { return true }
             ctx.saveGState()
@@ -100,6 +101,16 @@ enum SeedIcon {
                 ctx.setBlendMode(.normal)
                 NSColor.black.setFill()
                 NSBezierPath(rect: NSRect(x: 2, y: rect.height / 2 - 1, width: rect.width - 4, height: 2)).fill()
+            }
+            if pending {
+                // Question en attente : un point détouré puis plein, en bas à droite de la graine.
+                let d = rect.width * 0.36
+                let dot = NSRect(x: rect.width - d, y: 0, width: d, height: d)
+                ctx.setBlendMode(.clear)
+                NSBezierPath(ovalIn: dot.insetBy(dx: -1.2, dy: -1.2)).fill()
+                ctx.setBlendMode(.normal)
+                NSColor.black.setFill()
+                NSBezierPath(ovalIn: dot).fill()
             }
             return true
         }

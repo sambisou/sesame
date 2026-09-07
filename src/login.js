@@ -4,7 +4,7 @@ import path from "node:path";
 import { HOME, getSite, loadSites, saveSites, normalizeName, siteDomainFor, assertLoginUrl, validateExtraDomain } from "./config.js";
 import { getSecret, hasSecret, setSecret, keychainAvailable } from "./keychain.js";
 import { logEvent } from "./journal.js";
-import { isLocked, askHuman, askText, notify, notifyWaitingCode, channelLabel } from "./policy.js";
+import { isLocked, askHuman, askAccess, askText, notify, notifyWaitingCode, channelLabel, barAlive } from "./policy.js";
 import { connect, findPage, openPage, fillLogin, detectSecondFactor, waitForSecondFactor, publicUrl, hasLoginFields, gotoLogin } from "./browser.js";
 import { browserMode, extensionReady, openBridgeSession, bridgeWaitCode } from "./bridge-client.js";
 import { t } from "./i18n.js";
@@ -32,6 +32,7 @@ async function approveExtraDomain({ site, domain, base }) {
     return false;
   }
   const allowed = await askHuman({
+    kind: "domain", site: site.key, domain: v.domain, caller: base.caller,
     title: t("dlg_new_domain_title"),
     message: t("dlg_new_domain_message", { site: site.key, domain: v.domain }),
   });
@@ -101,7 +102,9 @@ export async function login({ site: siteName, submit = true, openIfMissing = tru
   let channel = viaExtension ? "extension" : "chrome-profile";
 
   if (site.policy === "ask") {
-    const allowed = await askHuman({
+    const viaBar = barAlive();
+    const ans = await askAccess({
+      kind: "access", site: site.key, domain: site.domain, caller, reason: reason || "", channel: channelLabel(channel), offerAlways: true,
       title: t("dlg_access_title"),
       message: t("dlg_access_message", {
         caller, site: site.key, domain: site.domain,
@@ -109,11 +112,19 @@ export async function login({ site: siteName, submit = true, openIfMissing = tru
         channel: channelLabel(channel),
       }),
     });
-    if (!allowed) {
-      logEvent({ ...base, result: "refusé", detail: "refus ou absence de réponse de l'utilisateur" });
-      return { ok: false, message: "L'utilisateur a refusé (ou n'a pas répondu) à la demande d'accès." };
+    if (!ans.allowed) {
+      logEvent({ ...base, result: "refusé", detail: ans.timedOut ? "sans réponse de l'utilisateur (délai écoulé)" : "refusé par l'utilisateur" });
+      return { ok: false, message: ans.timedOut ? "L'utilisateur n'a pas répondu à la demande d'accès (délai écoulé)." : "L'utilisateur a refusé la demande d'accès." };
     }
-    logEvent({ ...base, result: "autorisé", detail: `validé par l'utilisateur (dialogue, ${channel})` });
+    logEvent({ ...base, result: "autorisé", detail: `validé par l'utilisateur (${viaBar ? "fenêtre Sésame" : "dialogue"}, ${channel})` });
+    // « Ne plus me demander pour ce site » : la politique passe à always, à partir de la prochaine fois.
+    if (ans.always) {
+      try {
+        const sites = loadSites();
+        if (sites[site.key]) { sites[site.key].policy = "always"; saveSites(sites); }
+        logEvent({ ...base, action: "policy", result: "ok", detail: "always (coché dans la fenêtre d'accès)" });
+      } catch {}
+    }
   } else {
     logEvent({ ...base, result: "autorisé", detail: `politique always (${channel})` });
   }
@@ -593,14 +604,6 @@ export async function requestSite({ site: siteName, url, reason = "", note, call
   logEvent({ ...base, result: "ok", detail: `${domain}, politique ${sites[key].policy}, saisi par l'utilisateur dans la fenêtre Sésame` });
   notify("Sésame", t("notif_site_registered", { key }));
   return { ok: true, site: key, domain, policy: sites[key].policy, message: `« ${key} » enregistré par l'utilisateur. Appelle maintenant sesame_login(site: "${key}").` };
-}
-
-/** L'app Sésame écrit ~/.sesame/bar.alive toutes les 2 s tant qu'elle tourne. */
-function barAlive() {
-  try {
-    const st = fs.statSync(path.join(HOME, "bar.alive"));
-    return Date.now() - st.mtimeMs < 10000;
-  } catch { return false; }
 }
 
 const REQUEST_MAX_AGE_MS = 600000; // 10 min : au-delà, une demande est considérée périmée (app disparue, oubliée)

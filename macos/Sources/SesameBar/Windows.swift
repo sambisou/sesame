@@ -40,13 +40,18 @@ final class Windows: NSObject, NSWindowDelegate {
         let host = NSHostingController(rootView: AccessRequestView(request: r) { allowed, always in
             store.resolveAsk(r.id, allowed: allowed, always: always)
         })
-        let w = NSWindow(contentViewController: host)
+        // Un NSPanel NON ACTIVANT : c'est ce qui permet à une app de la barre des menus (accessory, sans
+        // icône du Dock) de MONTRER une fenêtre cliquable SANS s'activer ni voler le clavier. Une NSWindow
+        // ordinaire d'une app accessory qui ne s'active jamais ne s'affiche pas — d'où cette panel.
+        let w = NSPanel(contentViewController: host)
         w.title = r.kind == "domain" ? t("win_ask_domain_title") : t("win_ask_title")
-        w.styleMask = [.titled, .closable]
+        w.styleMask = [.titled, .closable, .nonactivatingPanel]
+        w.isFloatingPanel = true
+        w.becomesKeyOnlyIfNeeded = true
+        w.hidesOnDeactivate = false
         w.isReleasedWhenClosed = false
         w.level = .floating
         w.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-        w.hidesOnDeactivate = false
         w.delegate = self
         open[key] = w
         // Bouton rouge : vaut « Refuser ».

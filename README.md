@@ -42,8 +42,7 @@ Requirements: macOS 13 or later, and Google Chrome. Nothing else — Sésame car
 2. Open it and drag **Sésame** into your Applications folder.
 3. Open Sésame. A short setup connects it to Claude, and a small seed appears in your menu bar.
 
-The first time, macOS says the app comes from an unidentified developer: right-click the app → *Open* →
-*Open*. (This goes away once the app is notarised by Apple.)
+Sésame is signed and notarized by Apple: on first launch macOS only asks the usual “downloaded from the Internet, open?” — no right-click, no “unidentified developer”.
 
 From then on, everything happens in the menu bar: add or remove a site, choose its rule, block
 everything, install the Chrome extension, read the log. No terminal, ever.

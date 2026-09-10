@@ -213,7 +213,7 @@
     "versionLabel": "Version",
     "versionValue": "0.6.2 · application Mac, image disque",
     "reqLabel": "Prérequis",
-    "reqValue": "macOS 13 ou plus récent, et Google Chrome. Rien d'autre à installer.",
+    "reqValue": "macOS 13 ou plus récent, et Google Chrome. Rien d'autre à installer. Signée et notarisée par Apple : pas de clic droit, pas d'avertissement « développeur non identifié ».",
     "priceLabel": "Prix",
     "priceValue": "Gratuit, code ouvert"
   },

@@ -16,8 +16,14 @@ VERSION="$(node -e 'console.log(require("../package.json").version)' 2>/dev/null
 log() { echo "[make-dmg] $*"; }
 die() { echo "[make-dmg] erreur : $*" >&2; exit 1; }
 
-log "1/6 — assemblage de Sésame.app (scripts/make-app.sh $CONFIG)…"
-./scripts/make-app.sh "$CONFIG"
+# SESAME_SKIP_BUILD=1 (scripts/notarize.sh) : l'app vient d'être assemblée ET signée Developer ID ; la
+# reconstruire ici la re-signerait ad hoc et ferait perdre cette signature.
+if [ "${SESAME_SKIP_BUILD:-}" = "1" ] && [ -d "build/Sésame.app" ]; then
+  log "1/6 — Sésame.app déjà assemblée et signée (SESAME_SKIP_BUILD=1) : pas de reconstruction."
+else
+  log "1/6 — assemblage de Sésame.app (scripts/make-app.sh $CONFIG)…"
+  ./scripts/make-app.sh "$CONFIG"
+fi
 APP="$(cd build && pwd)/Sésame.app"
 [ -d "$APP" ] || die "$APP absent après make-app.sh"
 
@@ -31,17 +37,17 @@ mkdir -p "$STAGE"
 log "2/6 — mise en scène (app + alias Applications + fond + lisez-moi)…"
 cp -R "$APP" "$STAGE/Sésame.app"
 ln -s /Applications "$STAGE/Applications"
-# Tant que l'app n'est pas notariée (voir scripts/notarize.sh), la première ouverture déclenche
-# l'avertissement Gatekeeper « développeur non identifié » : ce fichier explique le clic droit → Ouvrir,
-# en deux lignes, dans les deux langues du produit.
+# L'app est signée Developer ID et notarisée par Apple (scripts/notarize.sh) : aucune alerte à l'ouverture.
+# Ce fichier tient en deux lignes, dans les deux langues du produit.
 cat > "$STAGE/Read me first.txt" <<'EOF'
-Right-click "Sésame.app" and choose "Open" — the first time only. macOS
-doesn't recognize the developer yet, but Sésame is safe to run; after
-that first open, it launches normally, like any other app.
+Drag "Sésame.app" into Applications, then open it: a short setup connects
+it to Claude, and a small seed appears in your menu bar. Sésame is signed
+and notarized by Apple: just confirm the usual "open?" the first time.
 
-Clic droit sur « Sésame.app » puis « Ouvrir » — la première fois
-seulement. macOS ne reconnaît pas encore l'éditeur, mais Sésame ne
-présente aucun danger ; ensuite, l'app s'ouvre normalement.
+Glissez « Sésame.app » dans Applications, puis ouvrez-la : un court
+assistant la relie à Claude, et une petite graine apparaît dans la barre
+des menus. Sésame est signée et notarisée par Apple : confirmez
+simplement « ouvrir ? » la première fois.
 EOF
 mkdir -p "$STAGE/.background"
 if ! "$STAGE/Sésame.app/Contents/MacOS/SesameBar" --export-dmg-background "$STAGE/.background/dmg-background.png" >/dev/null 2>&1; then

@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!-- Droits du Node embarqué sous « hardened runtime » : ceux que le binaire officiel de nodejs.org porte
+       déjà. V8 compile à la volée (JIT) : sans allow-jit / allow-unsigned-executable-memory, Node plante au
+       premier script. Re-signer avec le certificat Developer ID efface les droits d'origine : on les redonne. -->
+  <key>com.apple.security.cs.allow-jit</key><true/>
+  <key>com.apple.security.cs.allow-unsigned-executable-memory</key><true/>
+  <key>com.apple.security.cs.disable-executable-page-protection</key><true/>
+  <key>com.apple.security.cs.disable-library-validation</key><true/>
+  <key>com.apple.security.cs.allow-dyld-environment-variables</key><true/>
+</dict>
+</plist>

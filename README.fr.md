@@ -43,8 +43,7 @@ Prérequis : macOS 13 ou plus récent, et Google Chrome. Rien d'autre — Sésam
 3. Ouvrez Sésame. Un court assistant le connecte à Claude, et une petite graine apparaît dans la barre
    des menus.
 
-La première fois, macOS annonce une app d'un développeur non identifié : clic droit sur l'app →
-*Ouvrir* → *Ouvrir*. (Cet avertissement disparaîtra quand l'app sera notarisée par Apple.)
+Sésame est signée et notarisée par Apple : au premier lancement, macOS pose seulement la question habituelle « app téléchargée d'Internet, ouvrir ? » — pas de clic droit, pas de « développeur non identifié ».
 
 Ensuite, tout se fait depuis la barre des menus : ajouter ou retirer un site, choisir sa règle, tout
 bloquer, installer l'extension Chrome, lire le journal. Jamais de terminal.

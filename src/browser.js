@@ -46,6 +46,16 @@ const OTP_WEAK = [
 ];
 const OTP_TEXT = /code (de |d')?(vérification|verification|sécurité|securite|confirmation|validation|à usage unique|unique)|code (reçu|recu|envoyé|envoye|transmis)|(envoyé|envoye|reçu|recu) par (sms|e-?mail|courriel|mail)|code (à|a|de) \d+ chiffres|saisis(?:sez)? (?:le|votre) code|entrez (?:le|votre) code|verification code|security code|one-time (code|password)|\d[- ]digit code|code (that|we) sent|sent (you|to you) (a|the) code|enter (the|your|a) code|two-factor|2fa|deux facteurs|double authentification|authentification forte|authenticator/i;
 
+// Écran « session déjà ouverte / choix de compte » (ex. Orange keep-connected) : bouton pour continuer avec le
+// compte affiché, lien pour changer de compte, jamais un bouton de déconnexion.
+const CONTINUE_TEXT_RE = /continuer avec ce compte|continuer en tant que|rester connect[ée]|continue (with|as)( this account)?|c'est (bien )?moi|use this account|keep me signed in/i;
+const SWITCH_TEXT_RE = /changer de compte|autre compte|use another account|switch account|not you/i;
+const LOGOUT_TEXT_RE = /d[ée]connexion|logout|sign out|supprimer/i;
+const ACCOUNT_CLICKABLE = 'button, a, [role="button"], input[type="submit"], input[type="button"], summary';
+// Adresse e-mail affichée, en clair ou masquée (j***@exemple.fr) : préfixe visible + astérisques/points/points
+// de suspension éventuels, puis @domaine.
+const EMAIL_CANDIDATE_RE = /[a-z0-9][a-z0-9._%+-]*[*•.…]*@[a-z0-9.-]+\.[a-z]{2,}/gi;
+
 /** État du port DevTools : "down" (rien n'écoute), "foreign" (autre chose qu'un Chrome Sésame), "up" (le nôtre). */
 async function cdpProbe() {
   let info;
@@ -111,35 +121,166 @@ export async function setWindowState(page, state) {
   } catch {}
 }
 
-/** @param {{onEvent?: (e:{result?:string, detail:string}) => void}} [o] rapporte au journal ce qui se passe (lancement, onglets figés fermés, redémarrage) */
+/** Cibles DevTools de type onglet (« page ») — jamais les pages internes (service workers, extensions…). */
+export async function listPageTargets() {
+  const r = await fetch(`${CDP_URL}/json/list`, { signal: AbortSignal.timeout(3000) });
+  if (!r.ok) return [];
+  const list = await r.json().catch(() => null);
+  return Array.isArray(list) ? list.filter(t => t?.type === "page" && t?.webSocketDebuggerUrl) : [];
+}
+
+/**
+ * La cible répond-elle à un Runtime.evaluate trivial en moins de `timeoutMs` ? C'est ce test, pas la simple
+ * présence dans /json/list, qui distingue un onglet figé (boucle JS bloquante, rend son thread renderer —
+ * et donc sa session DevTools — injoignable) d'un onglet normal. Node ≥ 22 seulement (WebSocket global) :
+ * sur un Node plus ancien, on considère la cible répondante (rien à fermer) plutôt que de planter.
+ */
+export function targetResponsive(target, timeoutMs = 2000) {
+  if (typeof WebSocket === "undefined") return Promise.resolve(true);
+  return new Promise(resolve => {
+    let done = false;
+    let ws;
+    const finish = ok => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      try { ws?.close(); } catch {}
+      resolve(ok);
+    };
+    const timer = setTimeout(() => finish(false), timeoutMs);
+    try {
+      // Pas d'en-tête Origin explicite : Chrome DevTools refuse parfois une origine inattendue (« Rejected an
+      // incoming WebSocket connection from the … origin »), et le WebSocket global de Node n'en envoie pas.
+      ws = new WebSocket(target.webSocketDebuggerUrl);
+    } catch { finish(false); return; }
+    ws.onopen = () => {
+      try { ws.send(JSON.stringify({ id: 1, method: "Runtime.evaluate", params: { expression: "1", returnByValue: true } })); }
+      catch { finish(false); }
+    };
+    ws.onmessage = ev => {
+      try { finish(JSON.parse(ev.data)?.id === 1); } catch { finish(false); }
+    };
+    ws.onerror = () => finish(false);
+    ws.onclose = () => finish(false);
+  });
+}
+
+/** Cibles « page » qui ne répondent pas au sondage ci-dessus (onglets figés, candidats à la fermeture). */
+export async function findFrozenTargets(timeoutMs = 2000) {
+  let targets;
+  try { targets = await listPageTargets(); } catch { return []; }
+  const frozen = [];
+  for (const t of targets) if (!(await targetResponsive(t, timeoutMs))) frozen.push(t);
+  return frozen;
+}
+
+/** Ferme une cible par le protocole DevTools (jamais le processus Chrome). */
+async function closeTarget(id) {
+  try { await fetch(`${CDP_URL}/json/close/${id}`, { signal: AbortSignal.timeout(3000) }); return true; } catch { return false; }
+}
+
+/** Ferme tous les onglets figés trouvés et journalise chacun. Renvoie le nombre fermé. */
+async function closeFrozenTabs(onEvent) {
+  const frozen = await findFrozenTargets();
+  let closed = 0;
+  for (const t of frozen) {
+    if (await closeTarget(t.id)) {
+      closed++;
+      onEvent({ result: "étape", detail: `onglet figé fermé : ${publicUrl(t.url || "") || t.id}` });
+    }
+  }
+  return closed;
+}
+
+/** PID des processus Chrome lancés sur le profil Sésame (jamais le Chrome habituel de l'utilisateur). */
+function sesameChromePids() {
+  try {
+    return execFileSync("/usr/bin/pgrep", ["-f", "--", `--user-data-dir=${CHROME_PROFILE}`], { encoding: "utf8" })
+      .trim().split("\n").filter(Boolean).map(Number);
+  } catch { return []; }
+}
+
+/** Arrête (SIGTERM puis, s'il le faut, SIGKILL) tous les processus Chrome Sésame et attend qu'ils disparaissent. */
+async function killSesameChrome(waitMs = 8000) {
+  const pids = sesameChromePids();
+  for (const pid of pids) { try { process.kill(pid, "SIGTERM"); } catch {} }
+  const deadline = Date.now() + waitMs;
+  while (Date.now() < deadline && sesameChromePids().length) await new Promise(r => setTimeout(r, 300));
+  for (const pid of sesameChromePids()) { try { process.kill(pid, "SIGKILL"); } catch {} }
+}
+
+const errCause = e => String(e?.message || e).split("\n")[0];
+
+/**
+ * @param {{onEvent?: (e:{result?:string, detail:string}) => void}} [o] rapporte au journal ce qui se passe
+ * (lancement, onglets figés fermés, redémarrage, échec final avec sa raison)
+ */
 export async function connect({ onEvent = () => {} } = {}) {
   // Chrome Sésame fermé : on le lance nous-mêmes (l'utilisateur n'a pas à passer par un terminal).
   let justLaunched = false;
   const state = await cdpProbe();
-  if (state === "foreign") throw new Error(`Un autre programme occupe ${CDP_URL} : ce n'est pas le Chrome Sésame. Ferme-le, ou change le port (SESAME_CDP_URL).`);
+  if (state === "foreign") {
+    onEvent({ result: "échec", detail: `port ${CDP_URL} occupé par un autre programme` });
+    throw new Error(`Un autre programme occupe ${CDP_URL} : ce n'est pas le Chrome Sésame. Ferme-le, ou change le port (SESAME_CDP_URL).`);
+  }
   if (state === "down") {
     onEvent({ result: "étape", detail: "Chrome Sésame fermé — lancement automatique" });
     const up = await launchChrome();
-    if (!up) throw new Error(`Chrome Sésame ne répond pas sur ${CDP_URL} après lancement. Vérifie qu'un autre Chrome n'occupe pas le port.`);
+    if (!up) {
+      onEvent({ result: "échec", detail: `Chrome Sésame ne répond pas sur ${CDP_URL} après lancement` });
+      throw new Error(`Chrome Sésame ne répond pas sur ${CDP_URL} après lancement. Vérifie qu'un autre Chrome n'occupe pas le port.`);
+    }
     justLaunched = true;
   }
-  try {
-    const browser = await chromium.connectOverCDP(CDP_URL, { timeout: 15000 });
-    // Lancé par Sésame : la fenêtre part réduite dans le Dock. Elle ne se dépliera que pour un code à saisir.
-    if (justLaunched) for (const p of allPages(browser)) await setWindowState(p, "minimized");
-    return browser;
-  } catch (e) {
-    // Chrome tourne mais n'a plus aucun onglet (dernière fenêtre fermée) : le protocole refuse la connexion.
-    // On ouvre un onglet vide par l'API DevTools et on réessaie une fois.
-    if (/context management is not supported/i.test(String(e.message))) {
-      try {
-        await fetch(`${CDP_URL}/json/new?about:blank`, { method: "PUT" });
-        await new Promise(r => setTimeout(r, 800));
-        return await chromium.connectOverCDP(CDP_URL, { timeout: 15000 });
-      } catch {}
-    }
-    throw new Error(`Impossible de joindre Chrome sur ${CDP_URL}. Lance-le avec : sesame chrome`);
+
+  const tryAttach = async () => {
+    try { return { browser: await chromium.connectOverCDP(CDP_URL, { timeout: 15000 }) }; }
+    catch (e) { return { error: e }; }
+  };
+
+  let attempt = await tryAttach();
+
+  // Chrome tourne mais n'a plus aucun onglet (dernière fenêtre fermée) : le protocole refuse la connexion.
+  // On ouvre un onglet vide par l'API DevTools et on réessaie une fois.
+  if (attempt.error && /context management is not supported/i.test(String(attempt.error.message))) {
+    try {
+      await fetch(`${CDP_URL}/json/new?about:blank`, { method: "PUT" });
+      await new Promise(r => setTimeout(r, 800));
+      attempt = await tryAttach();
+    } catch {}
   }
+
+  // Chrome répond sur le port (cdpProbe a dit « up ») mais l'attache Playwright expire quand même : un
+  // onglet figé (Crédit Mutuel, Sonnette…) bloque le protocole DevTools sur TOUTES les cibles. On ferme
+  // ceux qui ne répondent pas à un sondage trivial, puis on retente.
+  if (attempt.error) {
+    onEvent({ result: "étape", detail: "attache à Chrome expirée — recherche d'un onglet figé" });
+    const closed = await closeFrozenTabs(onEvent);
+    if (closed > 0) attempt = await tryAttach();
+  }
+
+  // Dernier recours : l'attache échoue encore alors que le port répond. On redémarre le Chrome Sésame — les
+  // sessions ouvertes survivent (cookies sur disque) — et on retente une dernière fois.
+  if (attempt.error) {
+    onEvent({ result: "étape", detail: "attache toujours impossible — redémarrage du Chrome Sésame" });
+    await killSesameChrome();
+    const up = await launchChrome();
+    if (up) {
+      onEvent({ result: "étape", detail: "Chrome Sésame redémarré (attache impossible)" });
+      justLaunched = true;
+      attempt = await tryAttach();
+    }
+  }
+
+  if (attempt.browser) {
+    // Lancé par Sésame : la fenêtre part réduite dans le Dock. Elle ne se dépliera que pour un code à saisir.
+    if (justLaunched) for (const p of allPages(attempt.browser)) await setWindowState(p, "minimized");
+    return attempt.browser;
+  }
+
+  const cause = attempt.error ? errCause(attempt.error) : "raison inconnue";
+  onEvent({ result: "échec", detail: `attache à Chrome impossible sur ${CDP_URL} (${cause})` });
+  throw new Error(`Chrome répond sur ${CDP_URL} mais Playwright n'a pas pu s'y attacher, même après avoir fermé les onglets figés et redémarré Chrome Sésame (${cause}).`);
 }
 
 export function allPages(browser) {
@@ -182,11 +323,13 @@ export async function findPage(browser, site) {
   return pages[pages.length - 1];
 }
 
-/** L'onglet montre-t-il un formulaire de connexion (identifiant ou mot de passe) ? */
+/** L'onglet montre-t-il un formulaire de connexion (identifiant ou mot de passe), ou un écran « session déjà
+ *  ouverte / choix de compte » (bouton « continuer avec ce compte », lien « changer de compte ») ? */
 export async function hasLoginFields(page, site) {
   if (page.isClosed()) return false;
   if (await locate(page, site, site.selectors?.password, PASS_SELECTORS)) return true;
-  return !!(await locateUser(page, site));
+  if (await locateUser(page, site)) return true;
+  return !!(await detectAccountScreen(page, site));
 }
 
 /** Ramène un onglet du site sur sa page de connexion (session déjà ouverte, tableau de bord, page de déconnexion…). */
@@ -245,6 +388,142 @@ async function locateUser(page, site) {
   const onLoginPage = site.loginUrl && hostnameOf(page.url()) === hostnameOf(site.loginUrl);
   const nearPassword = !!(await locate(page, site, site.selectors?.password, PASS_SELECTORS));
   if (onLoginPage || nearPassword) return locate(page, site, null, USER_WEAK);
+  return null;
+}
+
+/** Élément cliquable (bouton, lien…) dont le texte visible correspond à `re`, jamais un dont le texte
+ *  correspond à `excludeRe` (ex. un bouton de déconnexion). Cherche la frame principale puis les iframes
+ *  autorisées, comme `locate`. */
+async function findClickableByText(page, site, re, excludeRe) {
+  const build = root => root.locator(ACCOUNT_CLICKABLE).filter({ hasText: re });
+  const scan = async root => {
+    const loc = build(root);
+    const n = await loc.count().catch(() => 0);
+    for (let i = 0; i < Math.min(n, 20); i++) {
+      const el = loc.nth(i);
+      if (!(await el.isVisible().catch(() => false))) continue;
+      const text = (await el.innerText().catch(() => "")) || "";
+      if (excludeRe && excludeRe.test(text)) continue;
+      return el;
+    }
+    return null;
+  };
+  let el = await scan(page);
+  if (el) return { el, frame: page.mainFrame() };
+  for (const frame of page.frames()) {
+    if (frame === page.mainFrame() || !frameAllowed(site, frame)) continue;
+    el = await scan(frame);
+    if (el) return { el, frame };
+  }
+  return null;
+}
+
+/** Texte de l'élément qui affiche le compte connecté (sélecteur du site), ou tout le texte visible de la page
+ *  si aucun sélecteur n'est fourni (détection générique). */
+async function accountDisplayText(page, site) {
+  if (site.selectors?.accountSel) {
+    const hit = await locate(page, site, site.selectors.accountSel, []);
+    return hit ? (await hit.el.innerText().catch(() => "")) || "" : "";
+  }
+  return await page.evaluate(() => document.body?.innerText || "").catch(() => "");
+}
+
+/** Sous-chaînes qui ressemblent à une adresse e-mail (en clair ou masquée) dans un texte. */
+function findAccountCandidates(text) {
+  if (!text) return [];
+  const seen = new Set();
+  for (const m of String(text).matchAll(EMAIL_CANDIDATE_RE)) seen.add(m[0].toLowerCase());
+  return [...seen];
+}
+
+/** Un candidat affiché (en clair ou masqué, ex. « j***@exemple.fr ») désigne-t-il l'identifiant enregistré ?
+ *  Comparaison insensible à la casse ; un candidat masqué doit avoir le même domaine et un préfixe local qui
+ *  est le début de l'identifiant réel. */
+function accountMatches(candidate, username) {
+  if (!candidate || !username) return false;
+  const cand = String(candidate).trim().toLowerCase();
+  const uname = String(username).trim().toLowerCase();
+  if (!uname) return false;
+  if (cand === uname) return true;
+  const um = uname.match(/^([^@]+)@(.+)$/);
+  const cm = cand.match(/^([^@]+)@(.+)$/);
+  if (!um || !cm) return false;
+  const [, local, domain] = um;
+  const [, candLocal, candDomain] = cm;
+  if (candDomain !== domain) return false;
+  if (candLocal === local) return true;
+  const bare = candLocal.replace(/[*•.…]+$/, ""); // partie visible avant le masquage
+  return bare.length >= 1 && local.startsWith(bare);
+}
+
+/**
+ * Écran « session déjà ouverte / choix de compte » (ex. Orange keep-connected) : un bouton pour continuer avec
+ * le compte affiché et/ou un lien pour en changer. Renvoie null si ni l'un ni l'autre n'est présent (page de
+ * connexion classique) ; sinon { continueHit, switchHit, accountText }.
+ */
+async function detectAccountScreen(page, site) {
+  if (page.isClosed()) return null;
+  const continueHit = site.selectors?.continueSel
+    ? await locate(page, site, site.selectors.continueSel, [])
+    : await findClickableByText(page, site, CONTINUE_TEXT_RE, LOGOUT_TEXT_RE);
+  const switchHit = site.selectors?.switchAccountSel
+    ? await locate(page, site, site.selectors.switchAccountSel, [])
+    : await findClickableByText(page, site, SWITCH_TEXT_RE, LOGOUT_TEXT_RE);
+  if (!continueHit && !switchHit) return null;
+  return { continueHit, switchHit, accountText: await accountDisplayText(page, site) };
+}
+
+/**
+ * Gère un écran repéré par `detectAccountScreen` : clique « continuer avec ce compte » quand le compte
+ * affiché correspond à l'identifiant enregistré (ou qu'aucun compte identifiable n'est affiché), sinon clique
+ * « changer de compte » quand un compte différent est affiché. Ne clique jamais un bouton de déconnexion
+ * (déjà écarté par `findClickableByText`). Renvoie :
+ *  - null si l'écran n'a ni bouton « continuer » ni lien « changer de compte » ;
+ *  - { finished: true, result } quand il faut renvoyer `result` directement à l'appelant (succès
+ *    `alreadySignedIn`, ou abandon hors périmètre) ;
+ *  - { finished: false } après un clic, quand l'appelant doit relocaliser les champs du formulaire.
+ */
+async function tryAccountScreen(page, site, secret, steps, bail) {
+  const screen = await detectAccountScreen(page, site);
+  if (!screen) return null;
+  const { continueHit, switchHit, accountText } = screen;
+  const candidates = findAccountCandidates(accountText);
+  const identifiable = candidates.length > 0;
+  const matches = secret.username ? candidates.some(c => accountMatches(c, secret.username)) : false;
+  const mismatch = identifiable && !!secret.username && !matches; // un AUTRE compte, reconnaissable, est affiché
+  const preferContinue = !!continueHit && !mismatch;
+
+  const clickAndSettle = async (hit, label) => {
+    if (!onSite(page, site, hit.frame)) return { finished: true, result: await bail() };
+    await hit.el.click({ timeout: 5000 }).catch(() => {});
+    steps.push(label);
+    await page.waitForLoadState("domcontentloaded", { timeout: 15000 }).catch(() => {});
+    await page.waitForTimeout(600);
+    return null;
+  };
+
+  if (preferContinue) {
+    const stopped = await clickAndSettle(continueHit, "session déjà ouverte : « Continuer avec ce compte » cliqué");
+    if (stopped) return stopped;
+    if (page.isClosed()) return { finished: true, result: await bail() };
+    const pass2 = await locate(page, site, site.selectors?.password, PASS_SELECTORS);
+    const user2 = secret.username ? await locateUser(page, site) : null;
+    if (pass2 || user2) return { finished: false }; // un formulaire a suivi : suite du remplissage normal
+    return {
+      finished: true,
+      result: {
+        ok: true, steps, url: publicUrl(page.url()), title: await page.title().catch(() => ""),
+        alreadySignedIn: true,
+      },
+    };
+  }
+
+  if (switchHit) {
+    const stopped = await clickAndSettle(switchHit, "session déjà ouverte : compte différent → « Changer de compte » cliqué");
+    if (stopped) return stopped;
+    return { finished: false };
+  }
+
   return null;
 }
 
@@ -450,6 +729,22 @@ export async function fillLogin(page, site, secret, { submitForm = true, waitSec
     await page.waitForTimeout(1500);
     user = secret.username ? await locateUser(page, site) : null;
     pass = await locate(page, site, site.selectors?.password, PASS_SELECTORS);
+  }
+  if (!user && !pass) {
+    // Écran « session déjà ouverte / choix de compte » (ex. Orange keep-connected) : ni identifiant ni mot
+    // de passe visibles, mais un bouton « continuer avec ce compte » ou un lien « changer de compte ».
+    const handled = await tryAccountScreen(page, site, secret, steps, bail);
+    if (handled) {
+      if (handled.finished) return handled.result;
+      user = secret.username ? await locateUser(page, site) : null;
+      pass = await locate(page, site, site.selectors?.password, PASS_SELECTORS);
+      if (!user && !pass) {
+        // Après « changer de compte », le formulaire peut apparaître avec un léger délai.
+        await page.waitForTimeout(1000);
+        user = secret.username ? await locateUser(page, site) : null;
+        pass = await locate(page, site, site.selectors?.password, PASS_SELECTORS);
+      }
+    }
   }
   if (!user && !pass) {
     return { ok: false, steps, reason: "Aucun champ identifiant/mot de passe visible sur cet onglet. Ouvre la page de connexion d'abord (sesame_open_login)." };

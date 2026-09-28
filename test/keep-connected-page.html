@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="fr"><head><meta charset="utf-8"><title>Banc d'essai Sésame — déjà connecté</title>
+<style>body{font:16px -apple-system,Helvetica,sans-serif;padding:40px;max-width:420px}input{display:block;margin:8px 0 16px;padding:8px;width:100%}button{padding:8px 16px}</style>
+</head><body>
+<h1>Banc d'essai — déjà connecté</h1>
+
+<div id="kc" hidden>
+  <p>Vous êtes déjà connecté.</p>
+  <p id="who"></p>
+  <button id="continue" type="button">Continuer avec ce compte</button>
+  <p><a id="switch" href="#">Changer de compte</a></p>
+  <p><a id="logout" href="#">Déconnexion</a></p>
+</div>
+
+<div id="s1" hidden><label>E-mail <input id="email" type="email" autocomplete="username"></label><button id="next" type="button">Suivant</button></div>
+<div id="s2" hidden><label>Mot de passe <input id="pwd" type="password" autocomplete="current-password"></label><button id="go" type="button">Se connecter</button></div>
+<div id="s4" hidden><h2>Bienvenue, vous êtes connecté.</h2></div>
+
+<script>
+// Imite l'écran « Déjà connecté » d'Orange (login.orange.fr/keep-connected) : compte affiché, bouton
+// « Continuer avec ce compte », lien « Changer de compte » (et un lien de déconnexion, jamais à cliquer).
+//
+// ?account=<e-mail affiché, en clair ou masqué comme j***@exemple.fr> : compte proposé par « Continuer avec ce
+// compte ». Par défaut : sam@test.local, l'identifiant du banc d'essai (compte qui correspond). Passer un
+// autre e-mail (ou une forme masquée qui ne correspond pas) simule un compte différent : « Changer de compte »
+// doit alors mener au formulaire classique en deux temps (e-mail, Suivant, mot de passe).
+// ?classic=1 : pas d'écran « déjà connecté », directement le formulaire e-mail classique (comportement
+// inchangé, pour vérifier qu'on ne casse rien sur un site ordinaire).
+const q = new URLSearchParams(location.search);
+const account = q.get("account") || "sam@test.local";
+const classic = q.get("classic") === "1";
+
+if (classic) {
+  s1.hidden = false;
+} else {
+  kc.hidden = false;
+  who.textContent = "Connecté en tant que " + account;
+  document.getElementById("continue").onclick = () => { kc.hidden = true; s4.hidden = false; };
+  document.getElementById("switch").onclick = (e) => { e.preventDefault(); kc.hidden = true; s1.hidden = false; };
+  document.getElementById("logout").onclick = (e) => { e.preventDefault(); document.body.insertAdjacentHTML("beforeend", "<p id='logged-out'>déconnecté par erreur : ce lien n'aurait jamais dû être cliqué</p>"); };
+}
+next.onclick = () => { if (!email.value) return; s1.hidden = true; s2.hidden = false; };
+go.onclick = () => { if (pwd.value !== "bonmotdepasse") return; s2.hidden = true; s4.hidden = false; };
+</script>
+</body></html>

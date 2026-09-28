@@ -216,6 +216,7 @@ Print every configuration at once: `sesame install print`.
 
 - **Captcha**: Sésame does not solve it; it flags it (`hint`) and you do it in Chrome.
 - **Unusual forms** (fields without `type`, Shadow DOM): give the selectors with `--user-sel / --pass-sel / --submit-sel / --code-sel`. To find them: right-click the field → Inspect.
+- **"Already signed in" / account-picker screens** (e.g. Orange's `login.orange.fr/keep-connected`): Sésame recognizes a "continue with this account" button and a "switch account" link by their text, in French and English, and never clicks anything that looks like a sign-out link. If the account shown doesn't match, or detection needs help, add `continueSel`, `switchAccountSel` and `accountSel` (the element that shows the signed-in account) by hand to that site's `selectors` in `~/.sesame/sites.json`.
 - **macOS only** (Keychain + `osascript` dialogs). Node 20 or later.
 - Since 0.5.1, the password read goes through the signed Keychain assistant (`sesame-keychain`), which creates each item itself: no Keychain dialog at all for a site registered from now on. A site registered before 0.5.1 still belongs to the old tool; `sesame doctor` flags it and `sesame migrate-keychain` fixes it (one Keychain window, click **Allow**, once) — see SECURITY.md.
 - An agent running JavaScript in the Sésame Chrome (Claude in Chrome installed there) can observe what Sésame types into the page. Sésame always submits and clears the field on failure, but cannot hide the DOM from an extension you installed. See SECURITY.md.

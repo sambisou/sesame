@@ -552,6 +552,12 @@ async function doctor() {
     const res = await fetch(CDP_URL + "/json/version", { signal: AbortSignal.timeout(2000) });
     const v = await res.json();
     ok(true, `Chrome joignable sur ${CDP_URL} (${v.Browser})`);
+    // Le port répond, mais un onglet figé (Crédit Mutuel, Sonnette…) peut quand même bloquer l'attache
+    // Playwright sur TOUTES les cibles : même sonde que connect() (Runtime.evaluate trivial par onglet).
+    const { findFrozenTargets, publicUrl } = await import("../src/browser.js");
+    const frozen = await findFrozenTargets();
+    if (frozen.length === 0) ok(true, "Attache Playwright : tous les onglets répondent");
+    else ok(false, `Attache Playwright : ${frozen.length} onglet(s) figé(s) — ${frozen.map(t => publicUrl(t.url || "") || t.id).join(", ")} (sesame_login les fermera automatiquement)`);
   } catch {
     ok(false, `Chrome non joignable sur ${CDP_URL} → lance : sesame chrome`);
   }

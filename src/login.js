@@ -396,9 +396,10 @@ export async function openLogin({ site: siteName, caller = "mcp" }) {
     return { ok: false, message: `Accès à « ${site.key} » coupé par l'utilisateur.` };
   }
   const url = site.loginUrl || `https://${site.domain}/`;
+  const base = { site: site.key, action: "open_login", caller };
   let browser;
   try {
-    browser = await connect();
+    browser = await connect({ onEvent: d => logEvent({ ...base, action: "chrome", result: d.result || "étape", detail: d.detail }) });
     const existing = await findPage(browser, site);
     const page = existing || await openPage(browser, url);
     if (existing) await page.bringToFront().catch(() => {});
@@ -470,7 +471,7 @@ export async function waitCode({ site: siteName, timeoutSec = 180, caller = "mcp
 
   let browser;
   try {
-    browser = await connect();
+    browser = await connect({ onEvent: d => logEvent({ ...base, action: "chrome", result: d.result || "étape", detail: d.detail }) });
     const page = await findPage(browser, site);
     if (!page) {
       logEvent({ ...base, result: "échec", detail: "aucun onglet du site" });

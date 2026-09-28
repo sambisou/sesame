@@ -23,6 +23,12 @@ import Security
 //                                              code 44 si l'élément est absent, 1 si refusé ou autre échec.
 //   sesame-keychain has <service> <account>   ne lit AUCUNE donnée (kSecReturnAttributes seulement) ;
 //                                              code 0 si présent, 44 si absent, 1 si autre échec.
+//   sesame-keychain probe <service> <account> répond SANS JAMAIS ouvrir de fenêtre : cet outil peut-il relire
+//                                              l'élément en silence ? Code 0 si oui, 3 si le Trousseau
+//                                              demanderait une interaction (élément créé par une autre
+//                                              signature → à migrer), 44 si absent, 1 si autre échec.
+//                                              N'imprime rien. Sert à `sesame doctor`, à l'app (« N sites à
+//                                              re-migrer ») et à getSecret avant toute lecture réelle.
 //   sesame-keychain whoami                    imprime son propre chemin réel (une ligne), code 0.
 //
 // Aucune commande n'écrit sur stdout/stderr un message contenant la valeur du secret : en cas d'échec, le
@@ -33,7 +39,7 @@ let EXIT_NOT_FOUND: Int32 = 44
 let EXIT_ERROR: Int32 = 1
 
 func usageAndExit() -> Never {
-    FileHandle.standardError.write(Data("usage: sesame-keychain get|has|set|delete <service> <account> | whoami\n".utf8))
+    FileHandle.standardError.write(Data("usage: sesame-keychain get|has|probe|set|delete <service> <account> | whoami\n".utf8))
     exit(EXIT_ERROR)
 }
 
@@ -88,6 +94,27 @@ func cmdHas(service: String, account: String) -> Never {
         exit(0)
     case errSecItemNotFound:
         exit(EXIT_NOT_FOUND)
+    default:
+        exit(EXIT_ERROR)
+    }
+}
+
+let EXIT_WOULD_PROMPT: Int32 = 3
+
+/// Lecture d'essai avec l'interface utilisateur du Trousseau désactivée pour ce processus : si macOS aurait
+/// affiché la fenêtre « Sésame veut utiliser… », l'appel échoue avec errSecInteractionNotAllowed au lieu de
+/// bloquer. La valeur lue n'est jamais imprimée.
+func cmdProbe(service: String, account: String) -> Never {
+    SecKeychainSetUserInteractionAllowed(false)
+    var result: AnyObject?
+    let status = SecItemCopyMatching(keychainQuery(service: service, account: account, returnData: true), &result)
+    switch status {
+    case errSecSuccess:
+        exit(0)
+    case errSecItemNotFound:
+        exit(EXIT_NOT_FOUND)
+    case errSecInteractionNotAllowed, errSecAuthFailed, errSecInteractionRequired:
+        exit(EXIT_WOULD_PROMPT)
     default:
         exit(EXIT_ERROR)
     }
@@ -163,6 +190,9 @@ case "set":
 case "delete":
     guard args.count == 4 else { usageAndExit() }
     cmdDelete(service: args[2], account: args[3])
+case "probe":
+    guard args.count == 4 else { usageAndExit() }
+    cmdProbe(service: args[2], account: args[3])
 case "whoami":
     cmdWhoami()
 default:

@@ -111,12 +111,14 @@ export async function setWindowState(page, state) {
   } catch {}
 }
 
-export async function connect() {
+/** @param {{onEvent?: (e:{result?:string, detail:string}) => void}} [o] rapporte au journal ce qui se passe (lancement, onglets figés fermés, redémarrage) */
+export async function connect({ onEvent = () => {} } = {}) {
   // Chrome Sésame fermé : on le lance nous-mêmes (l'utilisateur n'a pas à passer par un terminal).
   let justLaunched = false;
   const state = await cdpProbe();
   if (state === "foreign") throw new Error(`Un autre programme occupe ${CDP_URL} : ce n'est pas le Chrome Sésame. Ferme-le, ou change le port (SESAME_CDP_URL).`);
   if (state === "down") {
+    onEvent({ result: "étape", detail: "Chrome Sésame fermé — lancement automatique" });
     const up = await launchChrome();
     if (!up) throw new Error(`Chrome Sésame ne répond pas sur ${CDP_URL} après lancement. Vérifie qu'un autre Chrome n'occupe pas le port.`);
     justLaunched = true;

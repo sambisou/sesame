@@ -12,11 +12,13 @@
 // Élément créé avant 0.5.1 (par `security -T <assistant>` ou `-T ""`) : sa lecture déclenche encore la
 // boîte de dialogue, même une fois l'assistant présent. Réenregistrer le site (`sesame add <site>` ou la
 // fenêtre Sésame) le recrée via l'assistant et évite cette invite pour de bon.
-import { execFileSync } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { KEYCHAIN_SERVICE } from "./config.js";
+import { HOME, KEYCHAIN_SERVICE } from "./config.js";
+import { logEvent } from "./journal.js";
+import { t } from "./i18n.js";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
@@ -58,6 +60,48 @@ function trustedHelperPath() {
   return info.present && info.signed ? info.path : null;
 }
 
+/** Délai maximal (s) accordé à une fenêtre du Trousseau avant de rendre la main avec une erreur claire. */
+export const KEYCHAIN_WAIT_SEC = Math.max(10, Number(process.env.SESAME_KEYCHAIN_WAIT_SEC) || 45);
+
+/** Marqueur lu par l'app Sésame (point sur l'icône + rangée « Sésame attend ton mot de passe macOS »). */
+const WAITING_FILE = path.join(HOME, "keychain-waiting.json");
+
+/**
+ * L'assistant peut-il relire cet élément SANS fenêtre ? Ne déclenche jamais d'invite (commande `probe` de
+ * l'assistant, interface du Trousseau désactivée). Renvoie "silent", "prompt" (élément lié à une autre
+ * signature : à migrer), "absent", ou null si l'assistant manque ou ne connaît pas `probe` (version < 0.6.3).
+ */
+export function probeSecret(siteKey) {
+  try { assertKey(siteKey); } catch { return null; }
+  const helper = trustedHelperPath();
+  if (!helper) return null;
+  try {
+    execFileSync(helper, ["probe", KEYCHAIN_SERVICE, siteKey], { stdio: "ignore", timeout: 10000 });
+    return "silent";
+  } catch (e) {
+    if (e && e.status === 3) return "prompt";
+    if (e && e.status === 44) return "absent";
+    return null; // code 1 (usage : assistant trop ancien) ou délai
+  }
+}
+
+/** Erreur typée : le Trousseau attendait une réponse de l'utilisateur et ne l'a pas eue dans le délai. */
+export class KeychainWaitingError extends Error {
+  constructor(siteKey, waitSec) {
+    super(`Le Trousseau attend votre mot de passe macOS pour « ${siteKey} » (fenêtre du Trousseau, peut-être derrière les autres) : sans réponse après ${waitSec} s. Cliquez « Toujours autoriser » dans cette fenêtre, ou lancez « Re-migrer » dans le menu Sésame, puis redemandez la connexion.`);
+    this.status = "attente_trousseau";
+    this.site = siteKey;
+  }
+}
+
+function markWaiting(siteKey) {
+  try {
+    fs.mkdirSync(HOME, { recursive: true, mode: 0o700 });
+    fs.writeFileSync(WAITING_FILE, JSON.stringify({ site: siteKey, ts: new Date().toISOString(), pid: process.pid, waitSec: KEYCHAIN_WAIT_SEC }), { mode: 0o600 });
+  } catch {}
+}
+function clearWaiting() { try { fs.unlinkSync(WAITING_FILE); } catch {} }
+
 /**
  * Exécute `security`. En cas d'échec, relance une erreur NEUTRE : jamais e.message de Node
  * (qui répète toute la ligne de commande, `-w <secret>` compris), seulement le code et le stderr
@@ -74,6 +118,13 @@ function sec(args, input) {
     err.status = code;
     throw err;
   }
+}
+
+/** Notification macOS, non bloquante (dupliquée de policy.js pour éviter un import circulaire). */
+function notify(title, message) {
+  if (process.platform !== "darwin") return;
+  const esc = x => String(x).replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+  try { execFile("/usr/bin/osascript", ["-e", `display notification "${esc(message)}" with title "${esc(title)}"`], () => {}); } catch {}
 }
 
 export function keychainAvailable() {
@@ -114,16 +165,36 @@ export function setSecret(siteKey, { username, password }) {
  * créés avec `-T <assistant>` ; sinon le Trousseau demande, voir la note en tête de fichier) ; à défaut,
  * repli sur `security -w`. Renvoie { username, password } ou lève une erreur si absent/refusé.
  */
-export function getSecret(siteKey) {
+export function getSecret(siteKey, { caller = "mcp" } = {}) {
   assertKey(siteKey);
   const helper = trustedHelperPath();
   let out;
   if (helper) {
+    // Sonde d'abord, sans fenêtre : si la lecture va demander une interaction (élément créé par une autre
+    // signature de l'assistant), on prévient l'utilisateur AVANT (notification, marqueur pour l'app,
+    // journal), et la lecture réelle est bornée dans le temps au lieu de pendre en silence.
+    const state = probeSecret(siteKey);
+    const willPrompt = state === "prompt";
+    if (willPrompt) {
+      logEvent({ site: siteKey, action: "keychain", caller, result: "attente", detail: `le Trousseau demande une interaction (élément lié à une autre signature) — fenêtre affichée, ${KEYCHAIN_WAIT_SEC} s au plus` });
+      markWaiting(siteKey);
+      notify(t("notif_keychain_title"), t("notif_keychain_message", { site: siteKey }));
+    }
     try {
-      out = execFileSync(helper, ["get", KEYCHAIN_SERVICE, siteKey], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+      out = execFileSync(helper, ["get", KEYCHAIN_SERVICE, siteKey], {
+        encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: willPrompt ? KEYCHAIN_WAIT_SEC * 1000 : 30000, killSignal: "SIGKILL",
+      });
+      if (willPrompt) logEvent({ site: siteKey, action: "keychain", caller, result: "ok", detail: "réponse donnée dans la fenêtre du Trousseau" });
     } catch (e) {
       if (e && e.status === 44) throw new Error(`Aucun identifiant dans le Trousseau pour « ${siteKey} »`);
+      if (e && (e.killed || e.signal === "SIGKILL")) {
+        logEvent({ site: siteKey, action: "keychain", caller, result: "échec", detail: `délai du Trousseau dépassé (${KEYCHAIN_WAIT_SEC} s sans réponse)` });
+        throw new KeychainWaitingError(siteKey, KEYCHAIN_WAIT_SEC);
+      }
+      if (willPrompt) logEvent({ site: siteKey, action: "keychain", caller, result: "refusé", detail: "refusé dans la fenêtre du Trousseau" });
       throw new Error(`Le Trousseau a refusé la lecture pour « ${siteKey} » (réponds « Autoriser » à sa demande, ou déverrouille-le)`);
+    } finally {
+      if (willPrompt) clearWaiting();
     }
   } else {
     try {
@@ -244,6 +315,11 @@ export function readSecretViaSecurityTool(siteKey) {
  * vaut une invite en trop qu'un site qui reste bloqué en silence sans qu'on sache pourquoi.
  */
 export function sitesNeedingMigration(siteKeys) {
+  // Depuis 0.6.3 : la sonde de l'assistant dit exactement si LUI (avec sa signature actuelle) relit en
+  // silence — `dump-keychain` ne montre que des chemins, pas la signature, et classait à tort « migré »
+  // un élément créé par une version ad hoc de l'assistant (fenêtre invisible du 28/09).
+  const first = siteKeys.length ? probeSecret(siteKeys[0]) : null;
+  if (first !== null) return siteKeys.filter(k => probeSecret(k) !== "silent");
   const trusted = trustedAppsByAccount();
   return siteKeys.filter(k => trusted[k] !== "helper");
 }

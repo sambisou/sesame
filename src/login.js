@@ -2,7 +2,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { HOME, getSite, loadSites, saveSites, normalizeName, siteDomainFor, assertLoginUrl, validateExtraDomain } from "./config.js";
-import { getSecret, hasSecret, setSecret, keychainAvailable } from "./keychain.js";
+import { getSecret, hasSecret, setSecret, keychainAvailable, KeychainWaitingError } from "./keychain.js";
 import { logEvent } from "./journal.js";
 import { isLocked, askHuman, askAccess, askText, notify, notifyWaitingCode, channelLabel, barAlive } from "./policy.js";
 import { connect, findPage, openPage, fillLogin, detectSecondFactor, waitForSecondFactor, publicUrl, hasLoginFields, gotoLogin } from "./browser.js";
@@ -77,6 +77,9 @@ async function approveExtraDomain({ site, domain, base }) {
 export async function login({ site: siteName, submit = true, openIfMissing = true, caller = "mcp", reason = "", waitForCode = true, codeTimeoutSec = 180, readSecret = getSecret }) {
   const site = getSite(siteName);
   const base = { site: site.key, action: "login", caller, detail: reason || undefined };
+  // Première trace dès l'entrée : si tout se bloque ensuite (Trousseau, Chrome), on sait au moins que la
+  // demande est arrivée, pour qui, et pourquoi.
+  logEvent({ ...base, result: "reçu", detail: `demande reçue${reason ? ` — ${reason}` : ""}` });
 
   if (isLocked()) {
     logEvent({ ...base, result: "refusé", detail: "verrou global actif (sesame unlock)" });
@@ -146,7 +149,8 @@ export async function login({ site: siteName, submit = true, openIfMissing = tru
         // 2e temps : le Trousseau n'est lu que maintenant, un formulaire du bon domaine ayant été vu.
         // Sur la MÊME connexion authentifiée que le prepare (voir openBridgeSession) : remplacer la
         // socket entre les deux temps ne change rien, et si ce pont meurt entre-temps, l'envoi échoue net.
-        secret = readSecret(site.key);
+        logEvent({ ...base, channel, result: "étape", detail: "formulaire trouvé par l'extension — lecture du Trousseau" });
+        secret = readSecret(site.key, { caller });
         const r = await fillViaExtension(prep.session, prep.ready.jobId, secret, { submit, waitForCode, codeTimeoutSec });
         if (r.result) {
           res = r.result;
@@ -201,7 +205,8 @@ export async function login({ site: siteName, submit = true, openIfMissing = tru
     }
 
     if (!res) {
-      browser = await connect();
+      logEvent({ ...base, result: "étape", detail: "connexion au Chrome Sésame" });
+      browser = await connect({ onEvent: d => logEvent({ ...base, action: "chrome", result: d.result || "étape", detail: d.detail }) });
       let page = await findPage(browser, site);
       let opened = false;
       if (!page) {
@@ -209,17 +214,21 @@ export async function login({ site: siteName, submit = true, openIfMissing = tru
           logEvent({ ...base, result: "échec", detail: "aucun onglet correspondant" });
           return { ok: false, message: `Aucun onglet Chrome ouvert sur ${site.domain}.`, steps: steps.length ? steps : undefined };
         }
+        logEvent({ ...base, result: "étape", detail: "aucun onglet du site — ouverture de la page de connexion" });
         page = await openPage(browser, site.loginUrl || `https://${site.domain}/`);
         opened = true;
       } else if (!(await hasLoginFields(page, site))) {
         // Onglet du site sans formulaire (déjà connecté, tableau de bord, déconnexion) : on ouvre la page de
         // connexion dans un autre onglet, sans toucher à celui de l'utilisateur.
+        logEvent({ ...base, result: "étape", detail: "onglet du site sans formulaire — ouverture de la page de connexion à côté" });
         page = await openPage(browser, site.loginUrl || `https://${site.domain}/`);
         if (!(await hasLoginFields(page, site))) await gotoLogin(page, site.loginUrl || `https://${site.domain}/`, site);
         opened = true;
       }
+      logEvent({ ...base, result: "étape", detail: `page prête (${publicUrl(page.url())}) — lecture du Trousseau` });
 
-      secret = secret || readSecret(site.key);
+      secret = secret || readSecret(site.key, { caller });
+      logEvent({ ...base, result: "étape", detail: "identifiants lus — remplissage du formulaire" });
       const onSecondFactor = sf => {
         logEvent({ ...base, action: "2fa", result: "attente", detail: `code demandé par le site (${sf.detail}) — l'utilisateur doit le saisir` });
         notifyWaitingCode(site.key, { detail: sf.kind === "champ" ? "" : sf.detail, timeoutSec: codeTimeoutSec, channel: "chrome-profile" });
@@ -266,6 +275,10 @@ export async function login({ site: siteName, submit = true, openIfMissing = tru
     return { ok: true, message: res.secondFactor?.pending ? `Identifiants remplis sur « ${site.key} », le site attend un code de l'utilisateur.` : `Identifiants remplis sur « ${site.key} ».`, steps: res.steps, url: res.url, title: res.title, secondFactor: res.secondFactor, hint: res.hint, opened: res.opened, channel: channel === "extension" ? channel : undefined };
   } catch (e) {
     const msg = sanitize(e.message);
+    if (e instanceof KeychainWaitingError) {
+      logEvent({ ...base, result: "échec", detail: `en attente du Trousseau : ${msg}` });
+      return { ok: false, status: "attente_trousseau", message: msg, hint: "Le mot de passe de ce site est lié à une ancienne signature de Sésame. L'utilisateur doit répondre à la fenêtre du Trousseau (« Toujours autoriser ») ou cliquer « Re-migrer » dans le menu Sésame ; ensuite la lecture sera silencieuse. Ne relance pas la connexion avant qu'il ait confirmé.", steps: steps.length ? steps : undefined };
+    }
     logEvent({ ...base, result: "erreur", detail: msg });
     return { ok: false, message: msg, steps: steps.length ? steps : undefined };
   } finally {

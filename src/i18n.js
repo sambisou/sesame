@@ -81,6 +81,11 @@ const DICT = {
     fr: "Connexion à {site} : l'extension n'a pas répondu, vérifie l'onglet.",
     en: "Signing in to {site}: the extension didn't respond — check the tab.",
   },
+  notif_keychain_title: { fr: "Sésame attend ton mot de passe macOS", en: "Sésame is waiting for your macOS password" },
+  notif_keychain_message: {
+    fr: "Le Trousseau demande l'accès pour « {site} » : cherche sa fenêtre (parfois derrière), coche « Toujours autoriser ».",
+    en: "The Keychain is asking for access to “{site}”: find its window (sometimes behind others), tick “Always Allow”.",
+  },
   notif_login_filled: {
     fr: "Connexion à {site} remplie pour Claude ({caller}).",
     en: "Sign-in to {site} filled in for Claude ({caller}).",

@@ -52,7 +52,7 @@ struct SesameApp: App {
         MenuBarExtra {
             Panel(store: store)
         } label: {
-            Image(nsImage: SeedIcon.menuBar(alert: store.locked, pending: !store.asks.isEmpty))
+            Image(nsImage: SeedIcon.menuBar(alert: store.locked, pending: !store.asks.isEmpty || store.keychainWaiting != nil))
                 .onAppear { store.start() }
         }
         .menuBarExtraStyle(.window)

@@ -13,7 +13,7 @@ import {
 } from "../src/config.js";
 import {
   setSecret, deleteSecret, hasSecret, trustedAppsByAccount, trustedHelperInfo, keychainAvailable,
-  readSecretViaSecurityTool, sitesNeedingMigration,
+  readSecretViaSecurityTool, sitesNeedingMigration, probeSecret, helperPath,
 } from "../src/keychain.js";
 import { readJournal, formatEvent, logEvent } from "../src/journal.js";
 import { lock, unlock, isLocked, assertPolicy } from "../src/policy.js";
@@ -250,10 +250,23 @@ function migrateKeychain() {
     return;
   }
   console.log(`${toMigrate.length} site(s) à migrer : ${toMigrate.join(", ")}.`);
-  console.log("Une fenêtre du Trousseau va s'ouvrir pour chacun : cliquez « Autoriser ».\n");
+  console.log("Une fenêtre du Trousseau va s'ouvrir pour chacun : cochez « Toujours autoriser ». Rien n'est supprimé tant que ça suffit ;");
+  console.log("si un élément refuse encore, il est relu, supprimé puis réécrit à l'identique par l'assistant.\n");
   const results = [];
+  const hp = helperPath();
   for (const key of toMigrate) {
     try {
+      // 1er chemin, sans rien supprimer : lecture par l'assistant lui-même → « Toujours autoriser » lui
+      // accorde sa signature actuelle (Developer ID, stable) sur l'élément. Vérifié par la sonde.
+      if (hp && probeSecret(key) === "prompt") {
+        try { execFileSync(hp, ["get", KEYCHAIN_SERVICE, key], { stdio: "ignore", timeout: 300000 }); } catch {}
+        if (probeSecret(key) === "silent") {
+          logEvent({ site: key, action: "keychain_migrate", caller: "cli", result: "ok", detail: "« Toujours autoriser » accordé à l'assistant, élément conservé" });
+          console.log(`✅ « ${key} » : accès accordé à l'assistant, élément conservé — lectures silencieuses désormais.`);
+          results.push(true);
+          continue;
+        }
+      }
       const secret = readSecretViaSecurityTool(key);
       // L'ancien élément appartient à l'outil système : c'est lui qui doit le supprimer (SecItemDelete depuis
       // l'assistant échoue et SecItemAdd répondrait « élément en double », -25299).
@@ -514,7 +527,16 @@ async function doctor() {
     if (helper.present) ok(helper.signed, `assistant Trousseau : présent (${helper.path}), ${helper.signed ? "signé" : "NON SIGNÉ — ignoré, relance macos/scripts/make-app.sh"}`);
     else console.log("ℹ️  assistant Trousseau absent (macos/scripts/make-app.sh) : les lectures passent par /usr/bin/security, chaque site demande une confirmation à chaque connexion.");
     for (const k of Object.keys(sites)) ok(hasSecret(k), `Trousseau : secret présent pour « ${k} »`);
-    if (n > 0 && !args.includes("--fast")) {
+    if (n > 0 && helper.present && helper.signed && probeSecret(Object.keys(sites)[0]) !== null) {
+      // Sonde de l'assistant (0.6.3+) : dit sans fenêtre si LUI, tel qu'il est signé, relit en silence.
+      for (const k of Object.keys(sites)) {
+        const st = probeSecret(k);
+        if (st === "silent") ok(true, `Trousseau : « ${k} » — lecture silencieuse (assistant)`);
+        else if (st === "prompt") console.log(`⚠️  « ${k} » : lié à une autre signature de Sésame — le Trousseau demandera à chaque connexion → « Re-migrer… » dans le menu Sésame, ou : sesame migrate-keychain --site ${k}`);
+        else if (st === "absent") ok(false, `Trousseau : « ${k} » absent`);
+        else ok(false, `Trousseau : « ${k} » — sonde impossible`);
+      }
+    } else if (n > 0 && !args.includes("--fast")) {
       process.stdout.write("   (lecture des droits d'accès du Trousseau, peut prendre une minute… --fast pour sauter)\n");
       const trusted = trustedAppsByAccount();
       for (const k of Object.keys(sites)) {

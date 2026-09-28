@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import Observation
 
@@ -9,6 +10,13 @@ struct Site: Identifiable, Equatable {
     var policy: String       // ask | always | revoked
     var note: String?
     var lastUsed: Date?
+}
+
+/// Une lecture du Trousseau qui attend l'utilisateur (voir Store.pollKeychainWaiting).
+struct KeychainWaiting: Equatable {
+    var site: String
+    var since: Date
+    var waitSec: Double
 }
 
 /// Une ligne du journal ~/.sesame/journal.jsonl.
@@ -40,6 +48,9 @@ final class Store {
     var sitesToMigrate: [String] = []
     var migrating = false
     var migrationReport: String?
+    /// Une lecture du Trousseau attend une réponse de l'utilisateur (marqueur ~/.sesame/keychain-waiting.json
+    /// écrit par src/keychain.js) : rangée dans le panneau, point sur l'icône, notification déjà envoyée.
+    var keychainWaiting: KeychainWaiting?
     /// Questions en attente d'une réponse de l'utilisateur (fenêtre flottante + rangée dans le panneau).
     var asks: [AccessRequest] = []
 
@@ -64,6 +75,7 @@ final class Store {
     var asksDir: URL { home.appendingPathComponent("asks") }
     var aliveFile: URL { home.appendingPathComponent("bar.alive") }
     var onboardedFile: URL { home.appendingPathComponent("onboarded") }
+    var keychainWaitingFile: URL { home.appendingPathComponent("keychain-waiting.json") }
 
     func start() {
         reload()
@@ -107,10 +119,11 @@ final class Store {
         checkChrome()
         pollRequests()
         pollAsks()
+        pollKeychainWaiting()
         tick += 1
         if tick % 3 == 1 { refreshExtension() }   // toutes les 6 s : la sonde peut attendre jusqu'à une seconde
         if tick % 5 == 2 { refreshClaudeStatus() } // toutes les 10 s : lit deux fichiers et lance `claude mcp list`
-        if tick % 30 == 2 { checkMigration() }    // toutes les 60 s : dump-keychain -a est coûteux (gros Trousseau)
+        if tick % 10 == 2 { checkMigration() }    // toutes les 20 s : la sonde de l'assistant coûte quelques ms par site
     }
 
     private var tick = 0
@@ -166,10 +179,42 @@ final class Store {
         }
     }
 
-    /// Sites dont l'élément Trousseau n'appartient pas à l'assistant : `dump-keychain -a` est lent (jusqu'à
-    /// plusieurs dizaines de secondes sur un gros Trousseau), donc hors du thread principal, et rate-limité
-    /// par l'appelant (voir `reload`). Sans assistant embarqué, rien à migrer (les lectures ne sont de toute
-    /// façon jamais silencieuses).
+    /// Marqueur d'attente du Trousseau : présent tant qu'une lecture attend une réponse (src/keychain.js le
+    /// retire dès la réponse ou le délai). Un marqueur plus vieux que son délai + 15 s est un orphelin : effacé.
+    private func pollKeychainWaiting() {
+        guard let d = try? Data(contentsOf: keychainWaitingFile),
+              let o = try? JSONSerialization.jsonObject(with: d) as? [String: Any],
+              let site = o["site"] as? String else {
+            if keychainWaiting != nil { keychainWaiting = nil }
+            return
+        }
+        let iso = ISO8601DateFormatter(); iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let ts = (o["ts"] as? String).flatMap { iso.date(from: $0) } ?? Date()
+        let wait = (o["waitSec"] as? Double) ?? 45
+        if Date().timeIntervalSince(ts) > wait + 15 {
+            try? FileManager.default.removeItem(at: keychainWaitingFile)
+            if keychainWaiting != nil { keychainWaiting = nil }
+            return
+        }
+        let w = KeychainWaiting(site: site, since: ts, waitSec: wait)
+        if keychainWaiting != w { keychainWaiting = w }
+    }
+
+    /// Ramène la fenêtre du Trousseau (SecurityAgent) devant, si elle existe : c'est elle que l'utilisateur
+    /// ne trouvait pas (derrière les autres fenêtres, ou sur un autre bureau).
+    func revealKeychainDialog() {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+        p.arguments = ["-e", "tell application \"System Events\" to set frontmost of process \"SecurityAgent\" to true"]
+        p.standardOutput = Pipe(); p.standardError = Pipe()
+        try? p.run()
+    }
+
+    /// Sites dont l'élément Trousseau ne se relit pas en silence par l'assistant TEL QU'IL EST SIGNÉ
+    /// AUJOURD'HUI : c'est la commande `probe` de l'assistant qui le dit (aucune fenêtre, quelques ms par
+    /// site). `dump-keychain` ne montrait que des chemins, pas la signature, et classait à tort « migré » un
+    /// élément créé par une version ad hoc — la fenêtre invisible du 28/09. Sans assistant embarqué, rien à
+    /// migrer (les lectures ne sont de toute façon jamais silencieuses).
     func checkMigration() {
         guard let helper = keychainHelperPath else { if !sitesToMigrate.isEmpty { sitesToMigrate = [] }; return }
         if checkingMigration { return }
@@ -197,6 +242,29 @@ final class Store {
     /// rend les chemins accentués en NFD (« é » décomposé), alors que le dépôt s'appelle « Sésame ».
     private static func sitesNeedingMigration(_ keys: [String], service: String, helperPath: String) -> [String] {
         guard !keys.isEmpty else { return [] }
+        // Sonde de l'assistant (0.6.3+) : 0 silencieux, 3 fenêtre nécessaire, 44 absent, 1 = commande inconnue.
+        var need: [String] = []
+        var probeKnown = true
+        for key in keys {
+            let p = Process()
+            p.executableURL = URL(fileURLWithPath: helperPath)
+            p.arguments = ["probe", service, key]
+            p.standardOutput = Pipe(); p.standardError = Pipe()
+            guard (try? p.run()) != nil else { probeKnown = false; break }
+            p.waitUntilExit()
+            switch p.terminationStatus {
+            case 0, 44: break
+            case 3: need.append(key)
+            default: probeKnown = false
+            }
+            if !probeKnown { break }
+        }
+        if probeKnown { return need }
+        return sitesNeedingMigrationByDump(keys, service: service, helperPath: helperPath)
+    }
+
+    /// Ancienne détection par `dump-keychain -a` (assistant sans `probe`) : par chemin, donc aveugle à la signature.
+    private static func sitesNeedingMigrationByDump(_ keys: [String], service: String, helperPath: String) -> [String] {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/usr/bin/security")
         p.arguments = ["dump-keychain", "-a"]
@@ -231,10 +299,25 @@ final class Store {
     func migrateKeychain(_ keys: [String], completion: @escaping (_ ok: Int, _ total: Int) -> Void) {
         guard let helper = keychainHelperPath, !keys.isEmpty else { completion(0, 0); return }
         let svc = service
+        // La fenêtre du Trousseau est attachée au processus de l'assistant, enfant de cette app : l'app
+        // active, la fenêtre arrive devant au lieu de se perdre derrière les autres.
+        NSApp.activate(ignoringOtherApps: true)
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self else { DispatchQueue.main.async { completion(0, 0) }; return }
             var outcomes: [(String, Bool)] = []
             for key in keys {
+                // 1er chemin, sans rien supprimer : une lecture par l'assistant lui-même. La fenêtre du
+                // Trousseau s'ouvre ; « Toujours autoriser » ajoute la signature ACTUELLE (Developer ID,
+                // stable d'une version à l'autre) à l'élément, qui se relit ensuite en silence. Vérifié
+                // aussitôt par la sonde.
+                _ = self.runHelper(helper, ["get", svc, key])
+                if self.runHelper(helper, ["probe", svc, key]) == 0 {
+                    outcomes.append((key, true))
+                    DispatchQueue.main.async { self.log(site: key, action: "keychain_migrate", result: "ok", detail: "« Toujours autoriser » accordé à l'assistant, élément conservé") }
+                    continue
+                }
+                // 2e chemin, si l'élément refuse toujours (partition d'un autre outil) : relu par l'outil
+                // système (fenêtre), supprimé, puis réécrit À L'IDENTIQUE par l'assistant.
                 let read = self.security(["find-generic-password", "-s", svc, "-a", key, "-w"])
                 guard read.status == 0 else { outcomes.append((key, false)); continue }
                 let value = read.out.trimmingCharacters(in: .newlines)
@@ -242,15 +325,14 @@ final class Store {
                 // L'ancien élément appartient à l'outil système : c'est lui qui le supprime, sinon SecItemAdd
                 // répond « élément en double » (-25299).
                 _ = self.security(["delete-generic-password", "-s", svc, "-a", key])
+                _ = self.runHelper(helper, ["delete", svc, key])
                 let writeStatus = self.runHelper(helper, ["set", svc, key], stdin: data)
                 guard writeStatus == 0 else { outcomes.append((key, false)); continue }
-                let hasStatus = self.runHelper(helper, ["has", svc, key])
-                outcomes.append((key, hasStatus == 0))
+                let ok = self.runHelper(helper, ["probe", svc, key]) == 0
+                outcomes.append((key, ok))
+                DispatchQueue.main.async { self.log(site: key, action: "keychain_migrate", result: ok ? "ok" : "échec", detail: "élément relu, supprimé et réécrit à l'identique par l'assistant") }
             }
             DispatchQueue.main.async {
-                for (key, ok) in outcomes {
-                    self.log(site: key, action: "keychain_migrate", result: ok ? "ok" : "échec")
-                }
                 self.checkMigration()
                 completion(outcomes.filter { $0.1 }.count, outcomes.count)
             }

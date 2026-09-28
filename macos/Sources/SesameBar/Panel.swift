@@ -22,6 +22,7 @@ struct Panel: View {
             Divider().overlay(Palette.line)
             ScrollView {
                 VStack(spacing: 0) {
+                    if let w = store.keychainWaiting { keychainWaitingRow(w) }
                     if !store.asks.isEmpty {
                         sectionTitle(t("panel_asks"), trailing: "\(store.asks.count)")
                         ForEach(store.asks) { a in askRow(a) }
@@ -60,9 +61,10 @@ struct Panel: View {
         rows += confirmRemove == nil ? 0 : 34
         rows += CGFloat(min(visibleEvents.count, 8)) * 24
         rows += store.extensionStatus.level == 3 ? 56 : 84
-        rows += store.sitesToMigrate.isEmpty ? 0 : (store.migrationReport == nil ? 34 : 52)
+        rows += store.sitesToMigrate.isEmpty ? 0 : (store.migrationReport == nil ? 62 : 80)
         rows += showDiag ? 34 : 0
         rows += store.asks.isEmpty ? 0 : 30 + CGFloat(store.asks.count) * 46
+        rows += store.keychainWaiting == nil ? 0 : 58
         return min(max(rows, 180), 620)
     }
 
@@ -84,6 +86,24 @@ struct Panel: View {
                 .buttonStyle(.plain).foregroundStyle(Palette.muted).help(t("panel_settings_help"))
         }
         .padding(.horizontal, 14).padding(.vertical, 10)
+    }
+
+    // MARK: le Trousseau attend l'utilisateur
+
+    /// Une lecture du Trousseau est bloquée sur sa fenêtre système (souvent derrière les autres) : on le dit,
+    /// et « Afficher » ramène cette fenêtre devant.
+    private func keychainWaitingRow(_ w: KeychainWaiting) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 8) {
+                Image(systemName: "key.fill").font(.system(size: 10)).foregroundStyle(Palette.wait)
+                Text(t("keychain_waiting_title", w.site)).font(.system(size: 12, weight: .semibold))
+                Spacer()
+                Button(t("keychain_waiting_show")) { store.revealKeychainDialog() }.controlSize(.mini)
+            }
+            Text(t("keychain_waiting_body")).font(.system(size: 10.5)).foregroundStyle(Palette.muted).fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.horizontal, 14).padding(.vertical, 6)
+        .background(Palette.wait.opacity(0.08))
     }
 
     // MARK: questions en attente
@@ -209,7 +229,7 @@ struct Panel: View {
         VStack(alignment: .leading, spacing: 5) {
             HStack(spacing: 8) {
                 Image(systemName: "exclamationmark.triangle.fill").font(.system(size: 10)).foregroundStyle(Palette.wait)
-                Text(t("migration_row", "\(store.sitesToMigrate.count)", store.sitesToMigrate.count > 1 ? "s" : ""))
+                Text(t("migration_row", "\(store.sitesToMigrate.count)", store.sitesToMigrate.count > 1 ? "s" : "", store.sitesToMigrate.count > 1 ? "s" : ""))
                     .font(.system(size: 11)).foregroundStyle(Palette.muted).fixedSize(horizontal: false, vertical: true)
                 Spacer()
                 if store.migrating {
@@ -218,6 +238,8 @@ struct Panel: View {
                     Button(t("migrate_button")) { migrate() }.controlSize(.mini)
                 }
             }
+            Text(store.migrating ? t("migration_in_progress") : t("migration_explain"))
+                .font(.system(size: 10.5)).foregroundStyle(Palette.muted).fixedSize(horizontal: false, vertical: true)
             if let r = store.migrationReport {
                 Text(r).font(.system(size: 10.5)).foregroundStyle(Palette.muted)
             }
@@ -278,8 +300,11 @@ struct Panel: View {
     private func actionLabel(_ e: Event) -> String {
         let r = e.result ?? ""
         switch e.action {
-        case "login": return r == "autorisé" ? t("login_authorized") : r == "refusé" ? t("login_denied") : r == "réussi" ? t("login_success") : r == "incertain" ? t("login_uncertain") : t("login_other", r)
+        case "login": return r == "autorisé" ? t("login_authorized") : r == "refusé" ? t("login_denied") : r == "réussi" ? t("login_success") : r == "incertain" ? t("login_uncertain") : r == "reçu" ? t("login_received") : r == "étape" ? t("login_step", e.detail ?? "") : t("login_other", r)
         case "2fa": return r == "attente" ? t("twofa_waiting") : r == "réussi" ? t("twofa_accepted") : t("twofa_other", r)
+        case "keychain": return r == "attente" ? t("keychain_ev_waiting") : r == "ok" ? t("keychain_ev_ok") : r == "échec" ? t("keychain_ev_timeout") : t("keychain_ev_other", r)
+        case "keychain_migrate": return r == "ok" ? t("keychain_migrated") : t("keychain_migrate_failed")
+        case "chrome": return t("chrome_ev", e.detail ?? r)
         case "request_site": return r == "ok" ? t("site_registered") : t("request_other", r)
         case "add_site", "update_site": return t("site_registered")
         case "remove_site": return t("site_removed")

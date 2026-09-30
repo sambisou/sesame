@@ -91,8 +91,20 @@ export function activateChrome() {
   } catch {}
 }
 
-/** Lance le Chrome « Sésame » (profil dédié, port DevTools) comme `sesame chrome`, et attend qu'il réponde. */
-export async function launchChrome({ waitMs = 15000 } = {}) {
+let launching = null;
+/**
+ * Lance le Chrome « Sésame » (profil dédié, port DevTools) comme `sesame chrome`, et attend qu'il réponde.
+ * UN SEUL navigateur : deux connexions simultanées (deux outils MCP à la fois) partagent le même lancement
+ * au lieu d'en démarrer deux, et un Chrome déjà debout n'est jamais doublé.
+ */
+export async function launchChrome(opts = {}) {
+  if (launching) return launching;
+  if (await cdpReachable()) return true;   // déjà debout : ne rien lancer
+  launching = launchChromeOnce(opts).finally(() => { launching = null; });
+  return launching;
+}
+
+async function launchChromeOnce({ waitMs = 15000 } = {}) {
   const bin = process.env.SESAME_CHROME || "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
   if (!fs.existsSync(bin)) throw new Error("Google Chrome n'est pas dans /Applications : installe-le, ou lance le Chrome Sésame à la main.");
   const port = CDP_URL.split(":").pop();

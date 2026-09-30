@@ -800,11 +800,12 @@ async function hideBanner(page) {
  */
 export async function waitForSecondFactor(page, site, { timeoutSec = 180, message, onTick, autoCode } = {}) {
   const started = Date.now();
-  const deadline = started + timeoutSec * 1000;
+  let deadline = started + timeoutSec * 1000;
   const banner = remaining => message || t("banner_wait_code", { remaining });
   const elapsed = () => Math.round((Date.now() - started) / 1000);
   let clear = 0;
   let autoFilled = false;
+  let lastCodeLook = 0;
   await setWindowState(page, "normal");      // dépliée si elle était réduite
   await page.bringToFront().catch(() => {}); // ici, oui : l'utilisateur doit taper le code
   activateChrome();
@@ -819,11 +820,14 @@ export async function waitForSecondFactor(page, site, { timeoutSec = 180, messag
     if (!still || still.kind === "texte-seul") { clear++; } else { clear = 0; }
     if (clear >= 2) {
       await hideBanner(page);
-      return { done: true, elapsedSec: elapsed() };
+      return { done: true, elapsedSec: elapsed(), auto: autoFilled };
     }
     if (onTick) { try { await onTick(remaining); } catch {} }
-    // Toutes les 5 s : le code est peut-être arrivé dans la boîte mail. Sésame le saisit lui-même.
-    if (autoCode && !autoFilled && elapsed() >= 3 && elapsed() % 5 === 0) {
+    // Toutes les 5 s au moins : le code est peut-être arrivé dans la boîte mail. Sésame le saisit lui-même.
+    // Intervalle mesuré, jamais un modulo : une interrogation qui dure plus d'une seconde sauterait sinon
+    // des tours entiers (constaté sur Chorus Pro : code trouvé au bout de 107 s au lieu de quelques-unes).
+    if (autoCode && !autoFilled && Date.now() - lastCodeLook >= 5000) {
+      lastCodeLook = Date.now();
       let hit = null;
       try { hit = await autoCode(); } catch {}
       if (hit && hit.code) {
@@ -833,6 +837,9 @@ export async function waitForSecondFactor(page, site, { timeoutSec = 180, messag
           hit.code = "";                                   // oublié tout de suite
           autoFilled = true;
           await submit(page, site, field.el).catch(() => {});
+          // Le site vient de recevoir le code : lui laisser le temps de l'accepter, même si le délai
+          // demandé touchait à sa fin (sinon on déclarerait un échec alors que tout est joué).
+          deadline = Math.max(deadline, Date.now() + 45000);
           await showBanner(page, t("banner_code_auto"));
         }
       }
@@ -994,7 +1001,7 @@ export async function fillLogin(page, site, secret, { submitForm = true, waitSec
               : `Attente du code interrompue : ${w.reason}.`,
             secondFactor: { pending, ...sf } };
         }
-        steps.push(`code saisi par l'utilisateur, connexion poursuivie (${w.elapsedSec} s)`);
+        steps.push(w.auto ? `code récupéré dans votre boîte mail et saisi par Sésame, connexion poursuivie (${w.elapsedSec} s)` : `code saisi par l'utilisateur, connexion poursuivie (${w.elapsedSec} s)`);
         await page.waitForLoadState("domcontentloaded", { timeout: 10000 }).catch(() => {});
         return { ok: true, steps, url: publicUrl(page.isClosed() ? "" : page.url()),
           title: page.isClosed() ? "" : await page.title().catch(() => ""), secondFactor: { pending: false, ...sf } };
@@ -1042,7 +1049,7 @@ export async function fillLogin(page, site, secret, { submitForm = true, waitSec
               secondFactor: { pending, ...sf },
             };
           }
-          steps.push(`code saisi par l'utilisateur, connexion poursuivie (${w.elapsedSec} s)`);
+          steps.push(w.auto ? `code récupéré dans votre boîte mail et saisi par Sésame, connexion poursuivie (${w.elapsedSec} s)` : `code saisi par l'utilisateur, connexion poursuivie (${w.elapsedSec} s)`);
           secondFactor = { pending: false, ...sf };
           await page.waitForLoadState("domcontentloaded", { timeout: 10000 }).catch(() => {});
           await page.waitForTimeout(800);

@@ -91,7 +91,7 @@ async function main() {
     case "policy": return policy(args[0], args[1]);
     case "revoke": return policy(args[0], "revoked");
     case "remove": case "rm": return remove(args[0]);
-    case "mailbox": return mailbox(args.slice(1));
+    case "mailbox": return mailbox(args);
     case "migrate-keychain": return migrateKeychain();
     case "lock": lock(); logEvent({ action: "lock", caller: "cli", result: "ok" }); return console.log("🔒 Sésame verrouillé. Aucune connexion ne sera remplie jusqu'à `sesame unlock`.");
     case "unlock": unlock(); logEvent({ action: "unlock", caller: "cli", result: "ok" }); return console.log("🔓 Sésame déverrouillé.");
@@ -305,7 +305,16 @@ async function mailbox(argv) {
   logEvent({ site: key, action: "mailbox", caller: "cli", result: "ok", detail: `boîte déclarée (${host}:${port})` });
   console.log(`✅ « ${key} » déclarée. Vérification…`);
   const v = await verifyMailbox(key);
-  console.log(v.ok ? "✅ la boîte répond, Sésame pourra y lire les codes." : `❌ ${v.message}`);
+  if (v.ok) return console.log("✅ la boîte répond, Sésame pourra y lire les codes.");
+  console.log(`❌ ${v.message}`);
+  const { looksLikeAppPassword } = await import("../src/mailbox.js");
+  if (looksLikeAppPassword(key) === false) {
+    console.log("   Ce qui a été saisi n'a pas la forme d'un mot de passe d'application Google :");
+    console.log("   celui-ci fait SEIZE lettres minuscules, sans chiffre ni symbole (Google l'affiche en");
+    console.log("   quatre groupes de quatre, ex. « abcd efgh ijkl mnop »), et s'obtient sur");
+    console.log("   https://myaccount.google.com/apppasswords — pas le mot de passe du compte Google.");
+    console.log("   La page n'existe que si la validation en deux étapes est active sur ce compte.");
+  }
 }
 
 function migrateKeychain() {

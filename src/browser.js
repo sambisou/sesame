@@ -51,6 +51,10 @@ const OTP_TEXT = /code (de |d')?(vérification|verification|sécurité|securite|
 const CONTINUE_TEXT_RE = /continuer avec ce compte|continuer en tant que|rester connect[ée]|continue (with|as)( this account)?|c'est (bien )?moi|use this account|keep me signed in/i;
 const SWITCH_TEXT_RE = /changer de compte|autre compte|use another account|switch account|not you/i;
 const LOGOUT_TEXT_RE = /d[ée]connexion|logout|sign out|supprimer/i;
+// Entrée vers le formulaire quand il est caché derrière un bouton ou un lien (« ESPACE PRIVÉ » chez CM2C,
+// « Se connecter » dans l'en-tête de beaucoup de sites). Jamais une création de compte ni une déconnexion.
+const LOGIN_ENTRY_RE = /se connecter|connexion|espace priv[ée]|identifiez-vous|mon compte|my account|log ?in|sign ?in/i;
+const LOGIN_ENTRY_EXCLUDE_RE = /cr[ée]er|inscri|nouveau compte|register|sign ?up|d[ée]connexion|log ?out|sign ?out|aide|assistance|oubli/i;
 // Signe d'une session DÉJÀ OUVERTE : la page offre de se déconnecter. Volontairement strict — « Mon compte »
 // ou « Connexion » figurent aussi sur les pages déconnectées, un lien de déconnexion non.
 const SIGNED_IN_TEXT_RE = /d[ée]connexion|se d[ée]connecter|log\s?out|sign\s?out/i;
@@ -361,6 +365,23 @@ export async function claimSiteTab(browser, site, { onEvent = () => {} } = {}) {
   return keep.isClosed() ? null : keep;
 }
 
+/**
+ * Aucun champ visible : le formulaire est peut-être caché derrière une entrée (« Se connecter »,
+ * « ESPACE PRIVÉ »…). Clique CETTE entrée une seule fois, puis laisse l'appelant relocaliser les champs.
+ * Ne clique jamais une création de compte ni une déconnexion. Renvoie true si un clic a eu lieu.
+ */
+async function openLoginForm(page, site, steps) {
+  if (page.isClosed()) return false;
+  const sel = site.selectors?.openFormSel;
+  const hit = sel ? await locate(page, site, sel, []) : await findClickableByText(page, site, LOGIN_ENTRY_RE, LOGIN_ENTRY_EXCLUDE_RE);
+  if (!hit || !onSite(page, site, hit.frame)) return false;
+  await hit.el.click({ timeout: 5000 }).catch(() => {});
+  steps.push("entrée « se connecter » cliquée pour faire apparaître le formulaire");
+  await page.waitForLoadState("domcontentloaded", { timeout: 10000 }).catch(() => {});
+  await page.waitForTimeout(1200);
+  return true;
+}
+
 /** L'onglet montre-t-il un formulaire de connexion (identifiant ou mot de passe), ou un écran « session déjà
  *  ouverte / choix de compte » (bouton « continuer avec ce compte », lien « changer de compte ») ? */
 export async function hasLoginFields(page, site) {
@@ -394,6 +415,11 @@ export async function looksSignedIn(page, site) {
     const from = new URL(site.loginUrl || `https://${site.domain}/`);
     const now = new URL(page.url());
     const norm = x => x.replace(/\/+$/, "") || "/";
+    // Applications à une seule page (Sonnette : /#/planning) : le chemin ne bouge pas, seule l'ancre change.
+    // Une ancre de route différente de celle de la page de connexion vaut donc « page interne ».
+    const route = h => (/^#\/?.+/.test(h) ? norm(h.replace(/^#\/?/, "/")) : "");
+    const hereHash = route(now.hash), fromHash = route(from.hash);
+    if (hereHash && hereHash !== fromHash) return true;
     const here = norm(now.pathname);
     if (here === "/" || here === norm(from.pathname)) return false;
     // Une page de connexion, d'erreur ou de déconnexion atteinte par redirection ne prouve rien.
@@ -838,6 +864,13 @@ export async function fillLogin(page, site, secret, { submitForm = true, waitSec
         user = secret.username ? await locateUser(page, site) : null;
         pass = await locate(page, site, site.selectors?.password, PASS_SELECTORS);
       }
+    }
+  }
+  if (!user && !pass && !(await detectAccountScreen(page, site))) {
+    // Formulaire peut-être replié derrière une entrée « Se connecter » : un seul clic, puis on regarde.
+    if (await openLoginForm(page, site, steps)) {
+      user = secret.username ? await locateUser(page, site) : null;
+      pass = await locate(page, site, site.selectors?.password, PASS_SELECTORS);
     }
   }
   if (!user && !pass) {

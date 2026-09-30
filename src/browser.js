@@ -751,6 +751,16 @@ export async function detectSecondFactor(page, site) {
   return { kind: "texte-seul", detail: `« ${m[0].trim()} »` };
 }
 
+/** L'élément du champ de code, s'il est là : même logique que detectSecondFactor, mais on veut l'élément. */
+async function locateCode(page, site) {
+  if (site.selectors?.code) return locate(page, site, site.selectors.code, []);
+  const strong = await locate(page, site, null, OTP_STRONG);
+  if (strong && !(await isSearchLike(strong.el))) return strong;
+  const weak = await locate(page, site, null, OTP_WEAK);
+  if (weak && !(await isSearchLike(weak.el))) return weak;
+  return null;
+}
+
 /** Bandeau dans la page, là où l'utilisateur va taper le code. Silencieux si la page ne s'y prête pas. */
 async function showBanner(page, text) {
   await page.evaluate(t => {
@@ -781,12 +791,20 @@ async function hideBanner(page) {
  * Fin « échec » : onglet fermé ou parti ailleurs, retour au formulaire mot de passe (code refusé), ou délai.
  * Renvoie { done, elapsedSec, reason? }.
  */
-export async function waitForSecondFactor(page, site, { timeoutSec = 180, message, onTick } = {}) {
+/**
+ * @param {object} [o]
+ * @param {() => Promise<{code:string}|null>} [o.autoCode] cherche le code là où le site l'a envoyé (boîte
+ *   mail de l'utilisateur, voir src/mailbox.js). Appelé toutes les 5 s. S'il en renvoie un, Sésame le TAPE
+ *   lui-même dans le champ et soumet : le code ne quitte jamais ce processus. L'utilisateur peut toujours
+ *   le taper à la main en même temps — le premier des deux gagne, la boucle s'arrête dès que le site accepte.
+ */
+export async function waitForSecondFactor(page, site, { timeoutSec = 180, message, onTick, autoCode } = {}) {
   const started = Date.now();
   const deadline = started + timeoutSec * 1000;
   const banner = remaining => message || t("banner_wait_code", { remaining });
   const elapsed = () => Math.round((Date.now() - started) / 1000);
   let clear = 0;
+  let autoFilled = false;
   await setWindowState(page, "normal");      // dépliée si elle était réduite
   await page.bringToFront().catch(() => {}); // ici, oui : l'utilisateur doit taper le code
   activateChrome();
@@ -804,7 +822,22 @@ export async function waitForSecondFactor(page, site, { timeoutSec = 180, messag
       return { done: true, elapsedSec: elapsed() };
     }
     if (onTick) { try { await onTick(remaining); } catch {} }
-    await showBanner(page, banner(remaining));
+    // Toutes les 5 s : le code est peut-être arrivé dans la boîte mail. Sésame le saisit lui-même.
+    if (autoCode && !autoFilled && elapsed() >= 3 && elapsed() % 5 === 0) {
+      let hit = null;
+      try { hit = await autoCode(); } catch {}
+      if (hit && hit.code) {
+        const field = await locateCode(page, site);
+        if (field && onSite(page, site, field.frame)) {
+          await typeInto(field.el, hit.code);
+          hit.code = "";                                   // oublié tout de suite
+          autoFilled = true;
+          await submit(page, site, field.el).catch(() => {});
+          await showBanner(page, t("banner_code_auto"));
+        }
+      }
+    }
+    await showBanner(page, autoFilled ? t("banner_code_auto") : banner(remaining));
     await page.waitForTimeout(1000);
   }
   await hideBanner(page);
@@ -823,7 +856,7 @@ export async function waitForSecondFactor(page, site, { timeoutSec = 180, messag
  * @param {number}  [opts.secondFactorTimeoutSec=180]
  * @param {(info:{kind:string,detail:string}) => void} [opts.onSecondFactor]  appelé quand un code est demandé (notification, journal)
  */
-export async function fillLogin(page, site, secret, { submitForm = true, waitSecondFactor = true, secondFactorTimeoutSec = 180, onSecondFactor } = {}) {
+export async function fillLogin(page, site, secret, { submitForm = true, waitSecondFactor = true, secondFactorTimeoutSec = 180, onSecondFactor, autoCode } = {}) {
   const steps = [];
   const where = frame => (frame && frame !== page.mainFrame() ? ` (iframe ${publicUrl(frame.url())})` : "");
   const gone = hostname => ({ ok: false, steps, url: publicUrl(page.isClosed() ? "" : page.url()), reason: `onglet parti vers ${hostname || "une autre page"} : remplissage abandonné` });
@@ -952,7 +985,7 @@ export async function fillLogin(page, site, secret, { submitForm = true, waitSec
             secondFactor: { pending: true, ...sf },
             hint: "Ce site n'a pas de mot de passe : il envoie un code. L'utilisateur doit le saisir, puis appelle sesame_wait_code." };
         }
-        const w = await waitForSecondFactor(page, site, { timeoutSec: secondFactorTimeoutSec });
+        const w = await waitForSecondFactor(page, site, { timeoutSec: secondFactorTimeoutSec, autoCode });
         if (!w.done) {
           const pending = w.reason === "délai dépassé";
           return { ok: false, steps, url: publicUrl(page.isClosed() ? "" : page.url()),
@@ -998,7 +1031,7 @@ export async function fillLogin(page, site, secret, { submitForm = true, waitSec
         steps.push(`code demandé par le site (${sf.detail})`);
         if (onSecondFactor) { try { await onSecondFactor(sf); } catch {} }
         if (waitSecondFactor) {
-          const w = await waitForSecondFactor(page, site, { timeoutSec: secondFactorTimeoutSec });
+          const w = await waitForSecondFactor(page, site, { timeoutSec: secondFactorTimeoutSec, autoCode });
           if (!w.done) {
             const pending = w.reason === "délai dépassé";
             return {

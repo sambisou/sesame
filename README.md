@@ -212,6 +212,23 @@ Sésame speaks **MCP**, the open protocol for assistant tools, over both standar
 
 Print every configuration at once: `sesame install print`.
 
+## One-time codes fetched for you
+
+When a site emails a one-time code (second factor), Sésame can fetch it from your mailbox and type it
+itself — nothing for you to do. Declare the mailbox once:
+
+```
+sesame mailbox add mail-home --address you@example.com
+```
+
+The Sésame window opens and you type an **app password** there (Gmail: myaccount.google.com → Security →
+App passwords). It goes to the Keychain, like any site.
+
+What Sésame allows itself: reading recent messages, nothing else. It never sends, never deletes, never
+marks a message as read. Only messages that arrived **after** the sign-in started and that mention the
+site in question are considered. The code is typed into the page and forgotten: it appears neither in the
+journal nor in anything Claude sees.
+
 ## Known limits
 
 - **Captcha**: Sésame does not solve it; it flags it (`hint`) and you do it in Chrome.

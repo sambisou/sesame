@@ -99,6 +99,10 @@ const DICT = {
     en: "“{key}” registered. Claude can now ask to sign in (with your approval each time).",
   },
 
+  banner_code_auto: {
+    fr: "Sésame a récupéré le code dans votre boîte mail et l'a saisi. La connexion se termine toute seule.",
+    en: "Sésame picked the code up from your mailbox and typed it. The sign-in is finishing on its own.",
+  },
   banner_wait_code: {
     fr: "Sésame attend que vous saisissiez le code reçu par e-mail, SMS ou application. La connexion reprendra toute seule dès que le site l'aura accepté (encore {remaining} s).",
     en: "Sésame is waiting for you to enter the code you received by email, SMS, or app. The sign-in will continue automatically once the site accepts it ({remaining}s left).",

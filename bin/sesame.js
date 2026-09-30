@@ -50,6 +50,14 @@ Usage : sesame <commande> [options]
                           always = automatique, revoked = accès coupé.
   revoke <site>           Raccourci de : policy <site> revoked
   remove <site>           Supprime le site ET son secret du Trousseau.
+  mailbox add <nom> --address <adresse> [--host <imap>] [--port <n>]
+                          Déclare une boîte mail que Sésame pourra LIRE pour y prendre les codes à usage
+                          unique (2FA). La fenêtre Sésame s'ouvre pour la saisie du mot de passe
+                          d'application : il ne passe ni par le terminal ni par l'IA. Aucune écriture,
+                          aucun envoi, aucune suppression — lecture seule des messages récents.
+  mailbox list            Les boîtes déclarées.
+  mailbox check <nom>     Vérifie que la boîte répond (sans lire de message).
+  mailbox remove <nom>    Retire la boîte et son mot de passe.
   migrate-keychain [--site <site>]
                           Pour les sites enregistrés avant la 0.5.1 : relit le secret via le Trousseau (une
                           fenêtre « Autoriser » par site) puis le réécrit via l'assistant Sésame, pour que la
@@ -83,6 +91,7 @@ async function main() {
     case "policy": return policy(args[0], args[1]);
     case "revoke": return policy(args[0], "revoked");
     case "remove": case "rm": return remove(args[0]);
+    case "mailbox": return mailbox(args.slice(1));
     case "migrate-keychain": return migrateKeychain();
     case "lock": lock(); logEvent({ action: "lock", caller: "cli", result: "ok" }); return console.log("🔒 Sésame verrouillé. Aucune connexion ne sera remplie jusqu'à `sesame unlock`.");
     case "unlock": unlock(); logEvent({ action: "unlock", caller: "cli", result: "ok" }); return console.log("🔓 Sésame déverrouillé.");
@@ -232,6 +241,73 @@ function remove(name) {
  * réécrit via l'assistant Sésame (setSecret, silencieux) et vérifie que la relecture par l'assistant marche
  * (hasSecret). Aucune valeur n'est jamais journalisée, seul ok/échec par site.
  */
+/**
+ * `sesame mailbox …` — boîtes mail que Sésame peut LIRE pour y prendre les codes à usage unique.
+ * Le mot de passe d'application est saisi dans la FENÊTRE Sésame (jamais dans un terminal, jamais par l'IA) :
+ * on dépose une demande que l'app affiche, exactement comme pour un site. Ensuite l'entrée est marquée
+ * « boîte mail » et sa politique passe à « revoked » : personne ne doit jamais s'y « connecter ».
+ */
+async function mailbox(argv) {
+  const sub = argv[0];
+  const { mailboxes, verifyMailbox } = await import("../src/mailbox.js");
+  if (!sub || sub === "list") {
+    const boxes = mailboxes();
+    if (!boxes.length) return console.log("Aucune boîte mail déclarée. `sesame mailbox add <nom> --address <adresse>`.");
+    for (const b of boxes) console.log(`  ${b.key.padEnd(14)} ${b.address}  (${b.host}:${b.port})`);
+    return;
+  }
+  if (sub === "check") {
+    const key = normalizeName(argv[1] || "");
+    const r = await verifyMailbox(key);
+    return console.log(r.ok ? `✅ « ${key} » répond.` : `❌ « ${key} » : ${r.message}`);
+  }
+  if (sub === "remove") {
+    const key = normalizeName(argv[1] || "");
+    const sites = loadSites();
+    if (!sites[key]?.mailbox) throw new Error(`Aucune boîte « ${key} ».`);
+    delete sites[key]; saveSites(sites); deleteSecret(key);
+    logEvent({ site: key, action: "mailbox", caller: "cli", result: "ok", detail: "boîte retirée" });
+    return console.log(`✅ « ${key} » retirée (entrée et mot de passe).`);
+  }
+  if (sub !== "add") throw new Error("Usage : sesame mailbox add|list|check|remove …");
+
+  const key = normalizeName(argv[1] || "");
+  if (!key) throw new Error("Donne un nom court à la boîte (ex. « mail-hotel »).");
+  const address = opt("--address");
+  if (!address || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(address)) throw new Error("--address <adresse> est obligatoire.");
+  const host = opt("--host") || "imap.gmail.com";
+  const port = Number(opt("--port") || 993);
+
+  const { requestSite, requestStatus } = await import("../src/login.js");
+  const r = await requestSite({
+    site: key, url: `https://${host}/`, caller: "cli", replace: true,
+    reason: "mot de passe d'application de votre boîte mail, pour que Sésame y prenne les codes à usage unique",
+    note: `Boîte mail lue par Sésame (${address}) — ce n'est pas un site de connexion.`,
+  });
+  if (!r.ok) throw new Error(r.message || "La fenêtre Sésame n'a pas pu s'ouvrir.");
+  if (r.alreadyRegistered) console.log("(entrée déjà présente, elle va être remplacée)");
+  console.log(`Fenêtre Sésame ouverte : saisis l'adresse « ${address} » et le MOT DE PASSE D'APPLICATION.`);
+  const id = r.requestId;
+  if (id) {
+    for (;;) {
+      const st = requestStatus({ requestId: id, caller: "cli" });
+      if (st.status === "attente") { await new Promise(x => setTimeout(x, 1000)); continue; }
+      if (st.status !== "enregistré") throw new Error(st.message || "Saisie abandonnée.");
+      break;
+    }
+  }
+  const sites = loadSites();
+  if (!sites[key]) throw new Error("L'entrée n'a pas été enregistrée.");
+  sites[key].mailbox = { address, host, port };
+  sites[key].policy = "revoked";     // une boîte mail n'est pas un site où l'on se connecte
+  sites[key].note = `Boîte mail lue par Sésame pour les codes à usage unique (${address}). Lecture seule : aucun envoi, aucune suppression. Ce n'est pas un site de connexion.`;
+  saveSites(sites);
+  logEvent({ site: key, action: "mailbox", caller: "cli", result: "ok", detail: `boîte déclarée (${host}:${port})` });
+  console.log(`✅ « ${key} » déclarée. Vérification…`);
+  const v = await verifyMailbox(key);
+  console.log(v.ok ? "✅ la boîte répond, Sésame pourra y lire les codes." : `❌ ${v.message}`);
+}
+
 function migrateKeychain() {
   if (!keychainAvailable()) throw new Error("Sésame stocke les secrets dans le Trousseau macOS : cette commande ne fonctionne que sur Mac.");
   const sites = loadSites();
@@ -546,6 +622,16 @@ async function doctor() {
       }
     }
   }
+  // Boîtes mail : Sésame y prend les codes à usage unique, en lecture seule.
+  try {
+    const { mailboxes, verifyMailbox } = await import("../src/mailbox.js");
+    const boxes = mailboxes();
+    if (boxes.length === 0) console.log("ℹ️  Aucune boîte mail déclarée : les codes à usage unique restent à saisir à la main (sesame mailbox add …).");
+    else for (const b of boxes) {
+      const v = await verifyMailbox(b.key);
+      ok(v.ok, `Boîte mail « ${b.key} » (${b.address}) : ${v.ok ? "répond, lecture seule" : v.message}`);
+    }
+  } catch (e) { console.log(`⚠️  Boîtes mail : ${String(e.message).slice(0, 120)}`); }
   ok(!isLocked(), isLocked() ? "Verrou global ACTIF" : "Verrou global inactif");
   ok(!!chromeBinary(), "Google Chrome installé");
   try {

@@ -8,6 +8,7 @@ import { isLocked, askHuman, askAccess, askText, notify, notifyWaitingCode, chan
 import { connect, findPage, claimSiteTab, openPage, fillLogin, detectSecondFactor, waitForSecondFactor, publicUrl, hasLoginFields, gotoLogin } from "./browser.js";
 import { browserMode, extensionReady, openBridgeSession, bridgeWaitCode } from "./bridge-client.js";
 import { t } from "./i18n.js";
+import { findCodeForSite, mailboxes } from "./mailbox.js";
 
 /** Étape ajoutée en tête de `steps` quand l'extension a lâché AVANT tout envoi de secret (mode auto). */
 export const FALLBACK_STEP = "extension injoignable, repli sur le Chrome Sésame";
@@ -235,7 +236,15 @@ export async function login({ site: siteName, submit = true, openIfMissing = tru
         logEvent({ ...base, action: "2fa", result: "attente", detail: `code demandé par le site (${sf.detail}) — l'utilisateur doit le saisir` });
         notifyWaitingCode(site.key, { detail: sf.kind === "champ" ? "" : sf.detail, timeoutSec: codeTimeoutSec, channel: "chrome-profile" });
       };
-      res = await fillLogin(page, site, secret, { submitForm: submit, waitSecondFactor: waitForCode, secondFactorTimeoutSec: codeTimeoutSec, onSecondFactor });
+      // Code envoyé par e-mail : Sésame va le chercher dans la boîte de l'utilisateur et le tape lui-même.
+      // Le code ne transite ni par l'IA ni par le journal — seulement « code récupéré dans la boîte ».
+      const startedAt = new Date();
+      const autoCode = mailboxes().length === 0 ? undefined : async () => {
+        const hit = await findCodeForSite(site, startedAt, { onEvent: d => logEvent({ ...base, action: "mail", result: d.result, detail: d.detail }) });
+        if (hit) logEvent({ ...base, action: "mail", result: "ok", detail: `code récupéré dans la boîte « ${hit.mailbox} » (de ${hit.from}) et saisi` });
+        return hit;
+      };
+      res = await fillLogin(page, site, secret, { submitForm: submit, waitSecondFactor: waitForCode, secondFactorTimeoutSec: codeTimeoutSec, onSecondFactor, autoCode });
       res.opened = opened;
 
       // Apprentissage assisté : l'onglet est parti hors périmètre, mais un mot de passe attend déjà sur le
@@ -243,7 +252,15 @@ export async function login({ site: siteName, submit = true, openIfMissing = tru
       if (!res.ok && res.needsDomain) {
         const approved = await approveExtraDomain({ site, domain: res.needsDomain, base });
         if (approved) {
-          res = await fillLogin(page, site, secret, { submitForm: submit, waitSecondFactor: waitForCode, secondFactorTimeoutSec: codeTimeoutSec, onSecondFactor });
+          // Code envoyé par e-mail : Sésame va le chercher dans la boîte de l'utilisateur et le tape lui-même.
+      // Le code ne transite ni par l'IA ni par le journal — seulement « code récupéré dans la boîte ».
+      const startedAt = new Date();
+      const autoCode = mailboxes().length === 0 ? undefined : async () => {
+        const hit = await findCodeForSite(site, startedAt, { onEvent: d => logEvent({ ...base, action: "mail", result: d.result, detail: d.detail }) });
+        if (hit) logEvent({ ...base, action: "mail", result: "ok", detail: `code récupéré dans la boîte « ${hit.mailbox} » (de ${hit.from}) et saisi` });
+        return hit;
+      };
+      res = await fillLogin(page, site, secret, { submitForm: submit, waitSecondFactor: waitForCode, secondFactorTimeoutSec: codeTimeoutSec, onSecondFactor, autoCode });
           res.opened = opened;
         }
       }
@@ -500,7 +517,14 @@ export async function waitCode({ site: siteName, timeoutSec = 180, caller = "mcp
     }
     logEvent({ ...base, result: "attente", detail: `reprise de l'attente (${sf.detail})` });
     notifyWaitingCode(site.key, { detail: sf.detail, timeoutSec, channel: "chrome-profile" });
-    const w = await waitForSecondFactor(page, site, { timeoutSec: Math.max(10, Math.round((deadline - Date.now()) / 1000)) });
+    // Même récupération automatique du code que pendant la connexion (voir login).
+    const resumedAt = new Date(Date.now() - 10 * 60 * 1000);   // le message est peut-être arrivé avant la reprise
+    const autoCode = mailboxes().length === 0 ? undefined : async () => {
+      const hit = await findCodeForSite(site, resumedAt, { onEvent: d => logEvent({ ...base, action: "mail", result: d.result, detail: d.detail }) });
+      if (hit) logEvent({ ...base, action: "mail", result: "ok", detail: `code récupéré dans la boîte « ${hit.mailbox} » (de ${hit.from}) et saisi` });
+      return hit;
+    };
+    const w = await waitForSecondFactor(page, site, { timeoutSec: Math.max(10, Math.round((deadline - Date.now()) / 1000)), autoCode });
     if (!w.done) {
       const pending = w.reason === "délai dépassé";
       logEvent({ ...base, result: pending ? "en attente" : "échec", detail: pending ? `code non saisi après ${timeoutSec} s` : w.reason });

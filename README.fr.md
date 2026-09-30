@@ -214,6 +214,23 @@ Sésame parle **MCP**, le protocole ouvert des outils d'assistants, sur ses deux
 
 Voir toutes les configurations d'un coup : `sesame install print`.
 
+## Codes à usage unique récupérés tout seuls
+
+Quand un site envoie un code par e-mail (2e facteur), Sésame peut aller le chercher dans votre boîte et
+le taper lui-même : vous n'avez rien à faire. Déclarez la boîte une fois —
+
+```
+sesame mailbox add mail-hotel --address vous@exemple.com
+```
+
+— la fenêtre Sésame s'ouvre et vous y saisissez un **mot de passe d'application** (Gmail :
+myaccount.google.com → Sécurité → Mots de passe d'application). Il part dans le Trousseau, comme un site.
+
+Ce que Sésame s'autorise : lire les messages récents, rien d'autre. Aucun envoi, aucune suppression,
+aucun message marqué comme lu. Seuls sont considérés les messages arrivés **après** le début de la
+connexion et qui parlent du site concerné. Le code est tapé dans la page et oublié : il n'apparaît ni
+dans le journal, ni dans ce que voit Claude.
+
 ## Limites connues
 
 - **Captcha** : Sésame ne le résout pas ; il le signale (`hint`) et c'est à toi de le faire dans le Chrome.

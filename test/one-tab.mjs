@@ -7,6 +7,7 @@ const HOME = fs.mkdtempSync(path.join(os.tmpdir(), "sesame-one-tab-"));
 process.env.SESAME_HOME = HOME;
 process.env.SESAME_KEYCHAIN_SERVICE = "sesame-one-tab-" + process.pid;
 process.env.SESAME_CDP_URL = "http://127.0.0.1:9236";
+process.env.SESAME_CHROME_HEADLESS = "1";   // aucun Chrome ne doit surgir à l'écran pendant les tests
 
 const PORT = 8843;
 // Site d'essai : une fois la session ouverte, /login redirige vers le tableau de bord — comme Cloudflare,

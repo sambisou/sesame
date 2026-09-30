@@ -112,9 +112,12 @@ async function launchChromeOnce({ waitMs = 15000 } = {}) {
   const bin = process.env.SESAME_CHROME || "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
   if (!fs.existsSync(bin)) throw new Error("Google Chrome n'est pas dans /Applications : installe-le, ou lance le Chrome Sésame à la main.");
   const port = CDP_URL.split(":").pop();
+  // SESAME_CHROME_HEADLESS=1 : Chrome sans fenêtre. Réservé aux bancs d'essai — ils ne doivent pas faire
+  // surgir de fenêtres sur l'écran de l'utilisateur pendant qu'ils tournent.
+  const headless = process.env.SESAME_CHROME_HEADLESS === "1" ? ["--headless=new"] : [];
   const child = spawn(bin, [
     `--remote-debugging-port=${port}`, `--user-data-dir=${CHROME_PROFILE}`,
-    "--no-first-run", "--no-default-browser-check", "--password-store=basic", "about:blank",
+    "--no-first-run", "--no-default-browser-check", "--password-store=basic", ...headless, "about:blank",
   ], { detached: true, stdio: "ignore" });
   child.unref();
   launchedPid = child.pid;

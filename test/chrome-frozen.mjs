@@ -10,6 +10,7 @@ import assert from "node:assert/strict";
 
 process.env.SESAME_HOME = fs.mkdtempSync(path.join(os.tmpdir(), "sesame-frozen-"));
 process.env.SESAME_CDP_URL = "http://127.0.0.1:9231"; // jamais 9222 (le vrai Chrome Sésame) : port dédié au banc
+process.env.SESAME_CHROME_HEADLESS = "1";   // aucun Chrome ne doit surgir à l'écran pendant les tests
 setTimeout(() => { console.error("⏱ délai global dépassé"); process.exit(2); }, 40000);
 
 const { launchChrome, stopLaunchedChrome, connect, listPageTargets } = await import("../src/browser.js");

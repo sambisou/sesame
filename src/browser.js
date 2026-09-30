@@ -3,7 +3,7 @@
 import fs from "node:fs";
 import { spawn, execFileSync } from "node:child_process";
 import { chromium } from "playwright-core";
-import { CDP_URL, CHROME_PROFILE, siteMatchesUrl, hostnameOf, siteDomainFor } from "./config.js";
+import { CDP_URL, CHROME_PROFILE, siteMatchesUrl, hostnameOf, siteDomainFor, validateExtraDomain } from "./config.js";
 import { t } from "./i18n.js";
 
 // Champs de recherche et assimilés : jamais un identifiant.
@@ -378,11 +378,27 @@ export async function hasLoginFields(page, site) {
  */
 export async function looksSignedIn(page, site) {
   if (page.isClosed()) return false;
+  // 1. La page offre de se déconnecter : signe direct, quand il est là.
   if (await findClickableByText(page, site, SIGNED_IN_TEXT_RE)) return true;
   try {
     const hrefs = await page.locator("a[href]").evaluateAll(els =>
       els.slice(0, 300).filter(e => !!(e.offsetWidth || e.offsetHeight)).map(e => e.getAttribute("href") || ""));
-    return hrefs.some(h => SIGNED_IN_HREF_RE.test(h));
+    if (hrefs.some(h => SIGNED_IN_HREF_RE.test(h))) return true;
+  } catch {}
+  // 2. Beaucoup d'applications modernes ne rendent leur bouton « Déconnexion » qu'une fois le menu du
+  //    compte ouvert : rien à trouver dans la page (constaté sur le tableau de bord Cloudflare). Signe
+  //    retenu alors : le site nous a DÉPLACÉS de sa page de connexion vers une de ses pages internes
+  //    (Cloudflare : /login → /<compte>/home). Une redirection vers la racine, elle, est le renvoi
+  //    habituel d'un visiteur NON connecté (E.Leclerc : /ma-carte → /), et ne compte pas.
+  try {
+    const from = new URL(site.loginUrl || `https://${site.domain}/`);
+    const now = new URL(page.url());
+    const norm = x => x.replace(/\/+$/, "") || "/";
+    const here = norm(now.pathname);
+    if (here === "/" || here === norm(from.pathname)) return false;
+    // Une page de connexion, d'erreur ou de déconnexion atteinte par redirection ne prouve rien.
+    if (/log-?in|log-?out|sign-?in|sign-?up|auth|connexion|deconnexion|erreur|error|404|not-?found/i.test(here)) return false;
+    return true;
   } catch { return false; }
 }
 
@@ -437,13 +453,29 @@ async function locate(page, site, custom, fallbacks) {
 }
 
 /** Champ identifiant plausible : sélecteur du site, champ fort, ou champ faible sur la page de connexion / près d'un mot de passe. */
+/** L'adresse ou le titre annoncent-ils une page de connexion ? Sert à accepter un simple champ texte
+ *  (sans nom ni identifiant HTML) quand le site redirige vers son propre service d'identité : Apple envoie
+ *  reportaproblem.apple.com sur idmsa.apple.com/IDMSWebAuth/signin, dont le champ n'a ni name ni id. */
+const LOGIN_PAGE_RE = /log-?in|sign-?in|signin|connexion|se-connecter|identifi|authent|\bauth\b|idms|\bsso\b|\bidp\b/i;
+async function looksLikeLoginPage(page) {
+  try {
+    const u = new URL(page.url());
+    if (LOGIN_PAGE_RE.test(u.pathname) || LOGIN_PAGE_RE.test(u.hostname)) return true;
+  } catch {}
+  const title = await page.title().catch(() => "");
+  return /connexion|se connecter|sign in|log in|login|identification|identifiez-vous/i.test(title);
+}
+
 async function locateUser(page, site) {
   if (site.selectors?.username) return locate(page, site, site.selectors.username, []);
   const strong = await locate(page, site, null, USER_STRONG);
   if (strong) return strong;
-  const onLoginPage = site.loginUrl && hostnameOf(page.url()) === hostnameOf(site.loginUrl);
+  // Un champ texte nu n'est accepté que si la page est bien une page de connexion : celle déclarée pour le
+  // site, une page dont l'adresse ou le titre l'annoncent, ou une page qui montre déjà un mot de passe.
+  // Sans ce garde-fou, le champ d'une inscription à une lettre d'information passerait pour un identifiant.
+  const onDeclaredLoginPage = site.loginUrl && hostnameOf(page.url()) === hostnameOf(site.loginUrl);
   const nearPassword = !!(await locate(page, site, site.selectors?.password, PASS_SELECTORS));
-  if (onLoginPage || nearPassword) return locate(page, site, null, USER_WEAK);
+  if (onDeclaredLoginPage || nearPassword || await looksLikeLoginPage(page)) return locate(page, site, null, USER_WEAK);
   return null;
 }
 
@@ -815,6 +847,17 @@ export async function fillLogin(page, site, secret, { submitForm = true, waitSec
       steps.push("session déjà ouverte : le site est connecté, aucun formulaire à remplir");
       await page.waitForLoadState("networkidle", { timeout: 5000 }).catch(() => {});
       return { ok: true, steps, url: publicUrl(page.url()), title: await page.title().catch(() => ""), alreadySignedIn: true };
+    }
+    // La page de connexion mène hors du périmètre du site (fournisseur d'identité sur un autre hôte, comme
+    // idmsa.apple.com pour Apple) : les champs y sont ignorés à dessein. Le dire, et proposer d'autoriser ce
+    // domaine — l'utilisateur tranche une fois, Sésame s'en souvient (apprentissage assisté).
+    const host = hostnameOf(page.url());
+    if (host && !siteMatchesUrl(site, page.url())) {
+      const cand = validateExtraDomain(site.domain, host);
+      if (cand.domain) {
+        return { ok: false, steps, url: publicUrl(page.url()), needsDomain: cand.domain,
+          reason: `la page de connexion de « ${site.key} » mène à ${cand.domain}, hors du périmètre du site : domaine à autoriser ?` };
+      }
     }
     return { ok: false, steps, reason: "Aucun champ identifiant/mot de passe visible sur cet onglet. Ouvre la page de connexion d'abord (sesame_open_login)." };
   }

@@ -713,6 +713,9 @@ async function detectNeedsDomain(page) {
 async function isSearchLike(el) {
   return el.evaluate(e => {
     const s = [e.type, e.name, e.id, e.placeholder, e.getAttribute("role"), e.getAttribute("aria-label"), e.autocomplete].join(" ").toLowerCase();
+    // « emailCode » (Chorus Pro), « smsCode », « codeEmail » : un code ENVOYÉ par e-mail ou SMS, pas un champ
+    // d'adresse. Sans cette exception, le mot « email » dans le nom le faisait écarter comme identifiant.
+    if (e.type !== "email" && /code|otp|jeton|token|\bpin\b|verif/.test(s)) return false;
     return /search|recherch|\bq\b|username|email/.test(s) || e.type === "email";
   }).catch(() => false);
 }
@@ -923,7 +926,43 @@ export async function fillLogin(page, site, secret, { submitForm = true, waitSec
       if (page.isClosed() || !siteMatchesUrl(site, page.url())) return await bail();
       pass = await locate(page, site, site.selectors?.password, PASS_SELECTORS);
     }
-    if (!pass) return { ok: false, steps, url: publicUrl(page.url()), reason: "Le champ mot de passe n'est pas apparu après l'identifiant (captcha, code SMS, ou sélecteur à préciser)." };
+    if (!pass) {
+      // Pas de mot de passe, mais un code à usage unique : certains sites se connectent SANS mot de passe
+      // (Chorus Pro : code envoyé par e-mail juste après l'identifiant). Ce n'est pas un échec.
+      // Le champ de code arrive parfois après le texte qui l'annonce (Chorus Pro) : on laisse jusqu'à 6 s.
+      let sf = await detectSecondFactor(page, site);
+      for (let i = 0; i < 12 && (!sf || sf.kind === "texte-seul"); i++) {
+        await page.waitForTimeout(500);
+        if (page.isClosed() || !siteMatchesUrl(site, page.url())) break;
+        const again = await detectSecondFactor(page, site);
+        if (again) sf = again;
+        if (sf && sf.kind !== "texte-seul") break;
+      }
+      if (sf && sf.kind !== "texte-seul") {
+        steps.push(`code demandé par le site, sans mot de passe (${sf.detail})`);
+        if (onSecondFactor) { try { await onSecondFactor(sf); } catch {} }
+        if (!waitSecondFactor) {
+          return { ok: true, steps, url: publicUrl(page.url()), title: await page.title().catch(() => ""),
+            secondFactor: { pending: true, ...sf },
+            hint: "Ce site n'a pas de mot de passe : il envoie un code. L'utilisateur doit le saisir, puis appelle sesame_wait_code." };
+        }
+        const w = await waitForSecondFactor(page, site, { timeoutSec: secondFactorTimeoutSec });
+        if (!w.done) {
+          const pending = w.reason === "délai dépassé";
+          return { ok: false, steps, url: publicUrl(page.isClosed() ? "" : page.url()),
+            reason: pending
+              ? `Ce site n'a pas de mot de passe : il attend un code, non saisi dans le délai (${secondFactorTimeoutSec} s). Appelle sesame_wait_code quand l'utilisateur est prêt.`
+              : `Attente du code interrompue : ${w.reason}.`,
+            secondFactor: { pending, ...sf } };
+        }
+        steps.push(`code saisi par l'utilisateur, connexion poursuivie (${w.elapsedSec} s)`);
+        await page.waitForLoadState("domcontentloaded", { timeout: 10000 }).catch(() => {});
+        return { ok: true, steps, url: publicUrl(page.isClosed() ? "" : page.url()),
+          title: page.isClosed() ? "" : await page.title().catch(() => ""), secondFactor: { pending: false, ...sf } };
+      }
+      if (sf) steps.push(`la page évoque un code (${sf.detail}) sans champ de saisie`);
+      return { ok: false, steps, url: publicUrl(page.url()), reason: "Le champ mot de passe n'est pas apparu après l'identifiant (captcha, code SMS, ou sélecteur à préciser)." };
+    }
   }
 
   if (!onSite(page, site, pass.frame)) return await bail();

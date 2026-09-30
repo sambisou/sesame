@@ -34,12 +34,22 @@ DEVELOPER_ID_APPLICATION="${DEVELOPER_ID_APPLICATION:-$(security find-identity -
 [ -n "$DEVELOPER_ID_APPLICATION" ] || die "aucun certificat « Developer ID Application » dans le Trousseau (security find-identity -v -p codesigning)"
 APPLE_TEAM_ID="$(printf '%s' "$DEVELOPER_ID_APPLICATION" | sed -n 's/.*(\([A-Z0-9]\{10\}\))$/\1/p')"
 [ -n "$APPLE_TEAM_ID" ] || die "identifiant d'équipe introuvable dans « $DEVELOPER_ID_APPLICATION »"
-if [ -z "${NOTARY_KEYCHAIN_PROFILE:-}" ]; then
-  if xcrun notarytool history --keychain-profile FilRouge >/dev/null 2>&1; then NOTARY_KEYCHAIN_PROFILE=FilRouge; else NOTARY_KEYCHAIN_PROFILE=sesame-notary; fi
+# Authentification notarytool : clé API App Store Connect (comme Fil Rouge — un profil Trousseau peut
+# disparaître à une rotation de jetons, une clé sur disque non), sinon profil Trousseau.
+NOTARY_KEY="${NOTARY_KEY:-$HOME/.private_keys/AuthKey_PFX7TNJWA9.p8}"
+NOTARY_KEY_ID="${NOTARY_KEY_ID:-PFX7TNJWA9}"
+NOTARY_ISSUER="${NOTARY_ISSUER:-69a6de74-7932-47e3-e053-5b8c7c11a4d1}"
+if [ -f "$NOTARY_KEY" ]; then
+  NOTARY_AUTH=(--key "$NOTARY_KEY" --key-id "$NOTARY_KEY_ID" --issuer "$NOTARY_ISSUER")
+  AUTH_LABEL="clé API $NOTARY_KEY_ID"
+else
+  NOTARY_KEYCHAIN_PROFILE="${NOTARY_KEYCHAIN_PROFILE:-sesame-notary}"
+  NOTARY_AUTH=(--keychain-profile "$NOTARY_KEYCHAIN_PROFILE")
+  AUTH_LABEL="profil $NOTARY_KEYCHAIN_PROFILE"
 fi
-xcrun notarytool history --keychain-profile "$NOTARY_KEYCHAIN_PROFILE" >/dev/null 2>&1 \
-  || die "profil notarytool « $NOTARY_KEYCHAIN_PROFILE » absent ou invalide (voir l'en-tête)"
-log "certificat : $DEVELOPER_ID_APPLICATION — équipe $APPLE_TEAM_ID — profil notarytool : $NOTARY_KEYCHAIN_PROFILE"
+xcrun notarytool history "${NOTARY_AUTH[@]}" >/dev/null 2>&1 \
+  || die "notarytool refuse l'authentification ($AUTH_LABEL) — voir l'en-tête"
+log "certificat : $DEVELOPER_ID_APPLICATION — équipe $APPLE_TEAM_ID — notarytool : $AUTH_LABEL"
 
 log "1/6 — assemblage de Sésame.app (scripts/make-app.sh $CONFIG)…"
 ./scripts/make-app.sh "$CONFIG" >/dev/null
@@ -72,8 +82,8 @@ fi
 log "3/6 — notarisation de l'app (zip) puis agrafage du ticket dans le bundle…"
 ZIP="build/Sesame-${VERSION}-app.zip"
 rm -f "$ZIP"; ditto -c -k --keepParent "$APP" "$ZIP"
-xcrun notarytool submit "$ZIP" --keychain-profile "$NOTARY_KEYCHAIN_PROFILE" --wait 2>&1 | tail -4 | tee build/notarize-app.log
-grep -q "status: Accepted" build/notarize-app.log || die "app refusée par la notarisation — xcrun notarytool log <id> --keychain-profile $NOTARY_KEYCHAIN_PROFILE"
+xcrun notarytool submit "$ZIP" "${NOTARY_AUTH[@]}" --wait 2>&1 | tail -4 | tee build/notarize-app.log
+grep -q "status: Accepted" build/notarize-app.log || die "app refusée par la notarisation — xcrun notarytool log <id> (même authentification)"
 xcrun stapler staple "$APP" >/dev/null || die "agrafage de l'app échoué"
 rm -f "$ZIP"
 
@@ -84,7 +94,7 @@ DMG="build/Sesame-${VERSION}.dmg"
 
 log "5/6 — signature puis notarisation du .dmg, agrafage…"
 codesign --force --timestamp --sign "$DEVELOPER_ID_APPLICATION" "$DMG" || die "signature du .dmg échouée"
-xcrun notarytool submit "$DMG" --keychain-profile "$NOTARY_KEYCHAIN_PROFILE" --wait 2>&1 | tail -4 | tee build/notarize-dmg.log
+xcrun notarytool submit "$DMG" "${NOTARY_AUTH[@]}" --wait 2>&1 | tail -4 | tee build/notarize-dmg.log
 grep -q "status: Accepted" build/notarize-dmg.log || die ".dmg refusé par la notarisation"
 xcrun stapler staple "$DMG" >/dev/null || die "agrafage du .dmg échoué"
 

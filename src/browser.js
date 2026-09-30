@@ -289,7 +289,11 @@ export function allPages(browser) {
 
 /** URL sans paramètres ni fragment : ce qui peut être journalisé ou renvoyé à l'IA (jamais un code OAuth ou un lien magique). */
 export function publicUrl(u) {
-  try { const x = new URL(u); return x.origin + x.pathname; } catch { return String(u || "").split(/[?#]/)[0]; }
+  try {
+    const x = new URL(u);
+    // about:blank, data:, chrome:// … : pas d'origine (« null ») — on rend le schéma et le chemin tels quels.
+    return x.origin === "null" ? `${x.protocol}${x.pathname}`.slice(0, 120) : x.origin + x.pathname;
+  } catch { return String(u || "").split(/[?#]/)[0]; }
 }
 
 /** Une frame peut-elle recevoir des identifiants du site ? Frame principale, même site, ou frame vide héritant d'un parent autorisé. */
@@ -321,6 +325,24 @@ export async function findPage(browser, site) {
   for (const p of pages.slice().reverse()) if (await locateUser(p, site)) return p;
   for (const p of pages.slice().reverse()) if (await detectSecondFactor(p, site)) return p;
   return pages[pages.length - 1];
+}
+
+/**
+ * L'onglet UNIQUE de ce site dans le Chrome Sésame. Règle du produit : un seul onglet par site, jamais deux.
+ * Garde le plus pertinent (même préférence que `findPage` : mot de passe, puis identifiant, puis étape code)
+ * et FERME les autres onglets du même site — sinon chaque connexion en laissait un de plus derrière elle.
+ * N'ouvre jamais rien : renvoie null si le site n'a aucun onglet (à l'appelant d'appeler `openPage`).
+ */
+export async function claimSiteTab(browser, site, { onEvent = () => {} } = {}) {
+  const matching = allPages(browser).filter(p => !p.isClosed() && siteMatchesUrl(site, p.url()));
+  if (matching.length === 0) return null;
+  const keep = (await findPage(browser, site)) || matching[matching.length - 1];
+  const extras = matching.filter(p => p !== keep && !p.isClosed());
+  for (const p of extras) await p.close().catch(() => {});
+  if (extras.length) {
+    onEvent({ result: "étape", detail: `${extras.length} onglet(s) en double fermé(s) pour « ${site.key} » — un seul onglet par site` });
+  }
+  return keep.isClosed() ? null : keep;
 }
 
 /** L'onglet montre-t-il un formulaire de connexion (identifiant ou mot de passe), ou un écran « session déjà
@@ -509,6 +531,8 @@ async function tryAccountScreen(page, site, secret, steps, bail) {
     const pass2 = await locate(page, site, site.selectors?.password, PASS_SELECTORS);
     const user2 = secret.username ? await locateUser(page, site) : null;
     if (pass2 || user2) return { finished: false }; // un formulaire a suivi : suite du remplissage normal
+    // Laisser la navigation qui suit le clic se terminer, pour rendre l'URL d'arrivée (tableau de bord).
+    await page.waitForLoadState("networkidle", { timeout: 8000 }).catch(() => {});
     return {
       finished: true,
       result: {
@@ -724,9 +748,13 @@ export async function fillLogin(page, site, secret, { submitForm = true, waitSec
   let user = secret.username ? await locateUser(page, site) : null;
   let pass = await locate(page, site, site.selectors?.password, PASS_SELECTORS);
 
-  if (!user && !pass) {
-    // Parfois le formulaire arrive après un clic "Se connecter" : on attend un peu.
-    await page.waitForTimeout(1500);
+  // Ni champ ni écran de compte : la page redirige peut-être encore (Orange : login.orange.fr/ →
+  // keep-connected prend 2-4 s après le premier rendu). On repasse toutes les 500 ms, jusqu'à 8 s, tant
+  // que rien de reconnaissable n'est là — sans jamais attendre pour rien quand le formulaire est déjà visible.
+  const settleDeadline = Date.now() + 8000;
+  while (!user && !pass && Date.now() < settleDeadline) {
+    if (await detectAccountScreen(page, site)) break;
+    await page.waitForTimeout(500);
     user = secret.username ? await locateUser(page, site) : null;
     pass = await locate(page, site, site.selectors?.password, PASS_SELECTORS);
   }

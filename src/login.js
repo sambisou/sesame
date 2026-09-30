@@ -5,7 +5,7 @@ import { HOME, getSite, loadSites, saveSites, normalizeName, siteDomainFor, asse
 import { getSecret, hasSecret, setSecret, keychainAvailable, KeychainWaitingError } from "./keychain.js";
 import { logEvent } from "./journal.js";
 import { isLocked, askHuman, askAccess, askText, notify, notifyWaitingCode, channelLabel, barAlive } from "./policy.js";
-import { connect, findPage, openPage, fillLogin, detectSecondFactor, waitForSecondFactor, publicUrl, hasLoginFields, gotoLogin } from "./browser.js";
+import { connect, findPage, claimSiteTab, openPage, fillLogin, detectSecondFactor, waitForSecondFactor, publicUrl, hasLoginFields, gotoLogin } from "./browser.js";
 import { browserMode, extensionReady, openBridgeSession, bridgeWaitCode } from "./bridge-client.js";
 import { t } from "./i18n.js";
 
@@ -206,8 +206,11 @@ export async function login({ site: siteName, submit = true, openIfMissing = tru
 
     if (!res) {
       logEvent({ ...base, result: "étape", detail: "connexion au Chrome Sésame" });
-      browser = await connect({ onEvent: d => logEvent({ ...base, action: "chrome", result: d.result || "étape", detail: d.detail }) });
-      let page = await findPage(browser, site);
+      const onChrome = d => logEvent({ ...base, action: "chrome", result: d.result || "étape", detail: d.detail });
+      browser = await connect({ onEvent: onChrome });
+      const loginUrl = site.loginUrl || `https://${site.domain}/`;
+      // Un seul onglet par site : on reprend celui du site (les doublons éventuels sont fermés).
+      let page = await claimSiteTab(browser, site, { onEvent: onChrome });
       let opened = false;
       if (!page) {
         if (!openIfMissing) {
@@ -215,15 +218,14 @@ export async function login({ site: siteName, submit = true, openIfMissing = tru
           return { ok: false, message: `Aucun onglet Chrome ouvert sur ${site.domain}.`, steps: steps.length ? steps : undefined };
         }
         logEvent({ ...base, result: "étape", detail: "aucun onglet du site — ouverture de la page de connexion" });
-        page = await openPage(browser, site.loginUrl || `https://${site.domain}/`);
+        page = await openPage(browser, loginUrl);
         opened = true;
       } else if (!(await hasLoginFields(page, site))) {
-        // Onglet du site sans formulaire (déjà connecté, tableau de bord, déconnexion) : on ouvre la page de
-        // connexion dans un autre onglet, sans toucher à celui de l'utilisateur.
-        logEvent({ ...base, result: "étape", detail: "onglet du site sans formulaire — ouverture de la page de connexion à côté" });
-        page = await openPage(browser, site.loginUrl || `https://${site.domain}/`);
-        if (!(await hasLoginFields(page, site))) await gotoLogin(page, site.loginUrl || `https://${site.domain}/`, site);
-        opened = true;
+        // Onglet du site sans formulaire (session déjà ouverte, tableau de bord, page de déconnexion) : on
+        // RAMÈNE cet onglet sur la page de connexion. Ouvrir un second onglet en laissait un de plus à
+        // chaque connexion — c'est ce qui encombrait le Chrome Sésame.
+        logEvent({ ...base, result: "étape", detail: "onglet du site sans formulaire — retour sur la page de connexion dans ce même onglet" });
+        await gotoLogin(page, loginUrl, site);
       }
       logEvent({ ...base, result: "étape", detail: `page prête (${publicUrl(page.url())}) — lecture du Trousseau` });
 
@@ -272,7 +274,7 @@ export async function login({ site: siteName, submit = true, openIfMissing = tru
     logEvent({ ...ev, result: certain ? "réussi" : "incertain", detail: `${res.steps.join(", ")}${res.hint ? " — " + res.hint : ""} → ${res.url}` });
     notify("Sésame", certain ? t("notif_login_filled", { site: site.key, caller }) : t("notif_login_check", { site: site.key, hint: res.hint || "code attendu" }));
     if (certain) touchLastUsed(site.key);
-    return { ok: true, message: res.secondFactor?.pending ? `Identifiants remplis sur « ${site.key} », le site attend un code de l'utilisateur.` : `Identifiants remplis sur « ${site.key} ».`, steps: res.steps, url: res.url, title: res.title, secondFactor: res.secondFactor, hint: res.hint, opened: res.opened, channel: channel === "extension" ? channel : undefined };
+    return { ok: true, alreadySignedIn: res.alreadySignedIn || undefined, message: res.alreadySignedIn ? `Session déjà ouverte sur « ${site.key} » : Sésame a cliqué « Continuer avec ce compte », rien à remplir.` : res.secondFactor?.pending ? `Identifiants remplis sur « ${site.key} », le site attend un code de l'utilisateur.` : `Identifiants remplis sur « ${site.key} ».`, steps: res.steps, url: res.url, title: res.title, secondFactor: res.secondFactor, hint: res.hint, opened: res.opened, channel: channel === "extension" ? channel : undefined };
   } catch (e) {
     const msg = sanitize(e.message);
     if (e instanceof KeychainWaitingError) {
@@ -400,7 +402,7 @@ export async function openLogin({ site: siteName, caller = "mcp" }) {
   let browser;
   try {
     browser = await connect({ onEvent: d => logEvent({ ...base, action: "chrome", result: d.result || "étape", detail: d.detail }) });
-    const existing = await findPage(browser, site);
+    const existing = await claimSiteTab(browser, site, { onEvent: d => logEvent({ ...base, action: "chrome", result: d.result || "étape", detail: d.detail }) });
     const page = existing || await openPage(browser, url);
     if (existing) await page.bringToFront().catch(() => {});
     logEvent({ site: site.key, action: "open_login", caller, result: "ok", detail: publicUrl(page.url()) });

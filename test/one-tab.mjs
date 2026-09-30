@@ -9,9 +9,17 @@ process.env.SESAME_KEYCHAIN_SERVICE = "sesame-one-tab-" + process.pid;
 process.env.SESAME_CDP_URL = "http://127.0.0.1:9236";
 
 const PORT = 8843;
+// Site d'essai : une fois la session ouverte, /login redirige vers le tableau de bord — comme Cloudflare,
+// SiteMinder, Apple… C'est le cas qui faisait repondre a tort « aucun champ identifiant/mot de passe ».
+let signedIn = false;
 const srv = http.createServer((q, r) => {
+  if (q.url.startsWith("/dashboard")) {
+    signedIn = true;
+    r.setHeader("content-type", "text/html; charset=utf-8");
+    return r.end('<h1>Tableau de bord</h1><p>Vous etes connecte.</p><a href="/logout">Deconnexion</a>');
+  }
+  if (signedIn) { r.writeHead(302, { location: "/dashboard" }); return r.end(); }
   r.setHeader("content-type", "text/html; charset=utf-8");
-  if (q.url.startsWith("/dashboard")) return r.end("<h1>Tableau de bord</h1><p>Vous etes connecte.</p>");
   r.end('<form method="get" action="/dashboard"><input name="u" id="username"><input name="p" type="password" id="password"><button type="submit">Se connecter</button></form>');
 });
 await new Promise(r => srv.listen(PORT, "127.0.0.1", r));
@@ -28,8 +36,10 @@ const { getSite } = cfg;
 let failed = null;
 try {
   // Trois connexions d'affilée : le site doit garder UN onglet, dans UNE fenêtre.
+  const results = [];
   for (let i = 1; i <= 3; i++) {
     const r = await login({ site: "demo", caller: "test", waitForCode: false });
+    results.push(r);
     assert.equal(r.ok, true, `connexion ${i} : ${r.message}`);
     const b = await connect();
     const tabs = allPages(b).filter(p => /127\.0\.0\.1:8843/.test(p.url()));
@@ -43,6 +53,13 @@ try {
   }
   console.log("  1 trois connexions d'affilee -> 1 onglet, 1 fenetre");
 
+  // Session deja ouverte : succes explicite, jamais « aucun champ identifiant/mot de passe visible ».
+  assert.equal(results[0].alreadySignedIn, undefined, "la 1re connexion remplit bien le formulaire");
+  for (const i of [1, 2]) {
+    assert.equal(results[i].alreadySignedIn, true, `connexion ${i + 1} : session deja ouverte non reconnue (${results[i].message})`);
+  }
+  console.log("  2 session deja ouverte (redirection vers le tableau de bord) -> succes « deja connecte »");
+
   // Des doublons deja presents (heritage des versions precedentes) sont fermes, pas ignores.
   {
     const b = await connect();
@@ -54,7 +71,7 @@ try {
     assert.ok(kept && !kept.isClosed(), "claimSiteTab doit garder un onglet");
     assert.equal(after.length, 1, `${after.length} onglet(s) restants au lieu d'un seul`);
     await b.close();
-    console.log(`  2 ${before} onglets du meme site -> 1 seul conserve, les autres fermes`);
+    console.log(`  3 ${before} onglets du meme site -> 1 seul conserve, les autres fermes`);
   }
 } catch (e) {
   failed = e;

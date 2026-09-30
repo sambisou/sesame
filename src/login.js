@@ -274,7 +274,7 @@ export async function login({ site: siteName, submit = true, openIfMissing = tru
     logEvent({ ...ev, result: certain ? "réussi" : "incertain", detail: `${res.steps.join(", ")}${res.hint ? " — " + res.hint : ""} → ${res.url}` });
     notify("Sésame", certain ? t("notif_login_filled", { site: site.key, caller }) : t("notif_login_check", { site: site.key, hint: res.hint || "code attendu" }));
     if (certain) touchLastUsed(site.key);
-    return { ok: true, alreadySignedIn: res.alreadySignedIn || undefined, message: res.alreadySignedIn ? `Session déjà ouverte sur « ${site.key} » : Sésame a cliqué « Continuer avec ce compte », rien à remplir.` : res.secondFactor?.pending ? `Identifiants remplis sur « ${site.key} », le site attend un code de l'utilisateur.` : `Identifiants remplis sur « ${site.key} ».`, steps: res.steps, url: res.url, title: res.title, secondFactor: res.secondFactor, hint: res.hint, opened: res.opened, channel: channel === "extension" ? channel : undefined };
+    return { ok: true, alreadySignedIn: res.alreadySignedIn || undefined, message: res.alreadySignedIn ? `Session déjà ouverte sur « ${site.key} » : rien à remplir, tu peux utiliser le site.` : res.secondFactor?.pending ? `Identifiants remplis sur « ${site.key} », le site attend un code de l'utilisateur.` : `Identifiants remplis sur « ${site.key} ».`, steps: res.steps, url: res.url, title: res.title, secondFactor: res.secondFactor, hint: res.hint, opened: res.opened, channel: channel === "extension" ? channel : undefined };
   } catch (e) {
     const msg = sanitize(e.message);
     if (e instanceof KeychainWaitingError) {

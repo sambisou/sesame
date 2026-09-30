@@ -51,6 +51,10 @@ const OTP_TEXT = /code (de |d')?(vérification|verification|sécurité|securite|
 const CONTINUE_TEXT_RE = /continuer avec ce compte|continuer en tant que|rester connect[ée]|continue (with|as)( this account)?|c'est (bien )?moi|use this account|keep me signed in/i;
 const SWITCH_TEXT_RE = /changer de compte|autre compte|use another account|switch account|not you/i;
 const LOGOUT_TEXT_RE = /d[ée]connexion|logout|sign out|supprimer/i;
+// Signe d'une session DÉJÀ OUVERTE : la page offre de se déconnecter. Volontairement strict — « Mon compte »
+// ou « Connexion » figurent aussi sur les pages déconnectées, un lien de déconnexion non.
+const SIGNED_IN_TEXT_RE = /d[ée]connexion|se d[ée]connecter|log\s?out|sign\s?out/i;
+const SIGNED_IN_HREF_RE = /log-?out|sign-?out|d[ée]connexion|deconnexion|logoff/i;
 const ACCOUNT_CLICKABLE = 'button, a, [role="button"], input[type="submit"], input[type="button"], summary';
 // Adresse e-mail affichée, en clair ou masquée (j***@exemple.fr) : préfixe visible + astérisques/points/points
 // de suspension éventuels, puis @domaine.
@@ -354,6 +358,22 @@ export async function hasLoginFields(page, site) {
   return !!(await detectAccountScreen(page, site));
 }
 
+/**
+ * La page montre-t-elle une session DÉJÀ OUVERTE ? Signe retenu : elle propose de se déconnecter (texte
+ * cliquable, ou lien dont l'adresse mène à la déconnexion), alors qu'aucun champ de connexion n'est visible.
+ * C'est le cas le plus courant : le site redirige la page de connexion vers son tableau de bord. Sans ce
+ * test, Sésame répondait « aucun champ identifiant/mot de passe visible » — un échec, alors que tout va bien.
+ */
+export async function looksSignedIn(page, site) {
+  if (page.isClosed()) return false;
+  if (await findClickableByText(page, site, SIGNED_IN_TEXT_RE)) return true;
+  try {
+    const hrefs = await page.locator("a[href]").evaluateAll(els =>
+      els.slice(0, 300).filter(e => !!(e.offsetWidth || e.offsetHeight)).map(e => e.getAttribute("href") || ""));
+    return hrefs.some(h => SIGNED_IN_HREF_RE.test(h));
+  } catch { return false; }
+}
+
 /** Ramène un onglet du site sur sa page de connexion (session déjà ouverte, tableau de bord, page de déconnexion…). */
 export async function gotoLogin(page, url, site) {
   // Certains liens de connexion déconnectent d'abord (page « vous êtes déconnecté ») et n'affichent le
@@ -362,6 +382,8 @@ export async function gotoLogin(page, url, site) {
     await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30000 }).catch(() => {});
     await page.waitForTimeout(1200);
     if (!site || await hasLoginFields(page, site)) return true;
+    // Le site renvoie sur son tableau de bord : la session est déjà ouverte, insister n'apporterait rien.
+    if (site && await looksSignedIn(page, site)) return false;
   }
   return false;
 }
@@ -775,6 +797,13 @@ export async function fillLogin(page, site, secret, { submitForm = true, waitSec
     }
   }
   if (!user && !pass) {
+    // Ni formulaire ni écran de compte, mais la page propose de se déconnecter : la session est déjà
+    // ouverte (le site a redirigé la page de connexion vers son tableau de bord). C'est un succès.
+    if (await looksSignedIn(page, site)) {
+      steps.push("session déjà ouverte : le site est connecté, aucun formulaire à remplir");
+      await page.waitForLoadState("networkidle", { timeout: 5000 }).catch(() => {});
+      return { ok: true, steps, url: publicUrl(page.url()), title: await page.title().catch(() => ""), alreadySignedIn: true };
+    }
     return { ok: false, steps, reason: "Aucun champ identifiant/mot de passe visible sur cet onglet. Ouvre la page de connexion d'abord (sesame_open_login)." };
   }
 

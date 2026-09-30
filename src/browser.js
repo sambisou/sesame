@@ -421,9 +421,12 @@ export async function looksSignedIn(page, site) {
     const hereHash = route(now.hash), fromHash = route(from.hash);
     if (hereHash && hereHash !== fromHash) return true;
     const here = norm(now.pathname);
-    if (here === "/" || here === norm(from.pathname)) return false;
-    // Une page de connexion, d'erreur ou de déconnexion atteinte par redirection ne prouve rien.
+    // Une page de connexion, d'erreur ou de déconnexion ne prouve jamais rien.
     if (/log-?in|log-?out|sign-?in|sign-?up|auth|connexion|deconnexion|erreur|error|404|not-?found/i.test(here)) return false;
+    // Hôte qui n'existe que pour les personnes connectées (dashboard.render.com, manager.ovhcloud.com) :
+    // y arriver sans formulaire de connexion, c'est y être connecté — même à la racine.
+    if (/^(dashboard|dash|app|admin|manager|manage|my|mon|portal|portail|console|espace|account|compte|client)\./i.test(now.hostname)) return true;
+    if (here === "/" || here === norm(from.pathname)) return false;
     return true;
   } catch { return false; }
 }

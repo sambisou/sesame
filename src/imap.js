@@ -37,8 +37,25 @@ export async function findLoginCode(o) {
     const candidates = parsed.filter(m => m.receivedAt && m.receivedAt >= sinceAdj && matchesHints(m, hintsFolded));
     if (!candidates.length) return null;
     candidates.sort((a, b) => b.receivedAt - a.receivedAt);
-    const chosen = candidates[0];
+    let chosen = candidates[0];
+    // Le premier passage ne lit que le début de chaque message (20 Ko) : le message retenu est relu
+    // en entier (un mail HTML lourd met souvent le code bien après les 20 premiers Ko).
+    if (chosen.uid) {
+      try {
+        const full = await fetchMessages(conn, tagState, chosen.uid, { single: true, maxBytes: 400000 });
+        const again = full.map(parseFetchResponse).find(m => m.uid === chosen.uid);
+        if (again) chosen = { ...chosen, searchText: again.searchText };
+      } catch { /* on garde le début déjà lu */ }
+    }
     const code = extractCode(chosen.searchText);
+    // Diagnostic sans le code : structure du texte autour de la phrase « votre code… », chiffres masqués.
+    try {
+      EXPLICIT_RE.lastIndex = 0;
+      const pm = EXPLICIT_RE.exec(chosen.searchText);
+      const at = pm ? pm.index : 0;
+      const extrait = chosen.searchText.slice(Math.max(0, at - 80), at + 220).replace(/\d/g, "#").replace(/\s+/g, " ");
+      console.error(`[sesame] mail ${chosen.uid || "?"} : ${chosen.searchText.length} car., code ${code ? code.length + " chiffres" : "absent"} ; extrait : ${extrait}`);
+    } catch {}
     if (!code) return null;
     return { code, from: chosen.fromDisplay, subject: chosen.subjectDisplay, receivedAt: chosen.receivedAt };
   });
@@ -146,8 +163,8 @@ async function getUidNext(conn, tagState) {
   throw neutral("Boîte de réception : UIDNEXT introuvable.");
 }
 
-async function fetchMessages(conn, tagState, start) {
-  const cmd = `UID FETCH ${start}:* (INTERNALDATE BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE)] BODY.PEEK[TEXT]<0.20000>)`;
+async function fetchMessages(conn, tagState, start, { single = false, maxBytes = 20000 } = {}) {
+  const cmd = `UID FETCH ${start}${single ? "" : ":*"} (UID INTERNALDATE BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE)] BODY.PEEK[TEXT]<0.${maxBytes}>)`;
   const res = await runCommand(conn, tagState, cmd);
   if (res.status !== "OK") throw neutral("Lecture de la boîte de réception impossible.");
   return res.untagged.filter(u => /\bFETCH\b/.test(u.text));
@@ -267,6 +284,8 @@ function literalBuffer(text, lit) {
 }
 
 function parseFetchResponse(u) {
+  const uidMatch = /\bUID (\d+)/.exec(u.text);
+  const uid = uidMatch ? parseInt(uidMatch[1], 10) : null;
   const dateMatch = /INTERNALDATE "([^"]+)"/i.exec(u.text);
   const internalDate = dateMatch ? parseInternalDate(dateMatch[1]) : null;
 
@@ -296,6 +315,7 @@ function parseFetchResponse(u) {
   const fromDisplay = headers.from || "";
 
   return {
+    uid,
     receivedAt,
     fromDisplay,
     subjectDisplay,

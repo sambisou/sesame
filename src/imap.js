@@ -495,7 +495,7 @@ function matchesHints(m, hintsFolded) {
 // Extraction du code.
 // ---------------------------------------------------------------------------
 
-const EXPLICIT_RE = /code\s*(?:de\s+|d['’])?(?:v[ée]rification|s[ée]curit[ée]|confirmation|validation)|code\s*(?:re[çc]u|envoy[ée])|votre\s+code|code\s+est|verification\s+code|security\s+code|one-time\s+(?:code|password)|\d[- ]digit\s+code|enter\s+(?:the|your)\s+code/gi;
+const EXPLICIT_RE = /is\s+your\s+(?:\w+\s+)?code|this\s+code\s+(?:can|will|is|expires)|your\s+(?:unique|one[- ]time|login|sign[- ]in|access)\s+code|unique\s+code|code\s*(?:de\s+|d['’])?(?:v[ée]rification|s[ée]curit[ée]|confirmation|validation)|code\s*(?:re[çc]u|envoy[ée])|votre\s+code|code\s+est|verification\s+code|security\s+code|one-time\s+(?:code|password)|\d[- ]digit\s+code|enter\s+(?:the|your)\s+code/gi;
 
 const EXCLUDE_PREFIX_RE = /(?:n°|num[ée]ro|commande|facture|r[ée]f(?:\.|[ée]rence)?)\s*[:#]?\s*$/i;
 
@@ -545,8 +545,13 @@ function extractCode(text) {
     if (candidates.some(c => c.idx < end && idx < c.end)) continue;
     candidates.push({ digits, idx, end });
   }
+  // Code mêlant lettres majuscules et chiffres (Booking : « …3 is your verification code ») :
+  // candidat seulement s'il est près d'une phrase explicite, jamais par défaut.
+  const alnumRe = /(?<![A-Za-z0-9])(?=[A-Z0-9]{4,8}(?![A-Za-z0-9]))(?=[A-Z0-9]*\d)(?=[A-Z0-9]*[A-Z])[A-Z0-9]{4,8}/g;
+  const alnum = [];
+  while ((m = alnumRe.exec(text))) alnum.push({ digits: m[0], idx: m.index, end: m.index + m[0].length, alnum: true });
   candidates.sort((a, b) => a.idx - b.idx);
-  if (!candidates.length) return null;
+  if (!candidates.length && !alnum.length) return null;
 
   const phrases = [];
   EXPLICIT_RE.lastIndex = 0;
@@ -560,11 +565,11 @@ function extractCode(text) {
     // (année, numéro de réservation), même un peu plus loin — à distance égale, le plus proche.
     let best = null;
     let bestScore = Infinity;
-    for (const c of candidates) {
+    for (const c of [...candidates, ...alnum]) {
       for (const p of phrases) {
         const dist = c.idx >= p.end ? c.idx - p.end : p.idx >= c.end ? p.idx - c.end : 0;
         if (dist > 60) continue;
-        const score = (c.digits.length === 6 ? 0 : 1000) + dist;
+        const score = (c.alnum ? 500 : c.digits.length === 6 ? 0 : 1000) + dist;
         if (score < bestScore) { bestScore = score; best = c; }
       }
     }
@@ -574,5 +579,5 @@ function extractCode(text) {
   const six = candidates.find(c => c.digits.length === 6);
   if (six) return six.digits;
 
-  return candidates[0].digits;
+  return candidates.length ? candidates[0].digits : null;
 }

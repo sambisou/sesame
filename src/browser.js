@@ -115,9 +115,12 @@ async function launchChromeOnce({ waitMs = 15000 } = {}) {
   // SESAME_CHROME_HEADLESS=1 : Chrome sans fenêtre. Réservé aux bancs d'essai — ils ne doivent pas faire
   // surgir de fenêtres sur l'écran de l'utilisateur pendant qu'ils tournent.
   const headless = process.env.SESAME_CHROME_HEADLESS === "1" ? ["--headless=new"] : [];
+  // Sur un écran virtuel sans gestionnaire de fenêtres (serveur), la fenêtre doit remplir l'écran
+  // elle-même : SESAME_WINDOW="1440,1000". Sans cette variable (Mac), rien ne change.
+  const fenetre = process.env.SESAME_WINDOW ? [`--window-size=${process.env.SESAME_WINDOW}`, "--window-position=0,0"] : [];
   const child = spawn(bin, [
     `--remote-debugging-port=${port}`, `--user-data-dir=${CHROME_PROFILE}`,
-    "--no-first-run", "--no-default-browser-check", "--password-store=basic", ...headless, "about:blank",
+    "--no-first-run", "--no-default-browser-check", "--password-store=basic", ...headless, ...fenetre, "about:blank",
   ], { detached: true, stdio: "ignore" });
   child.unref();
   launchedPid = child.pid;

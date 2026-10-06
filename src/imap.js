@@ -465,12 +465,16 @@ function extractCode(text) {
   }
 
   if (phrases.length) {
+    // Près d'une phrase « votre code est… » : un nombre de six chiffres l'emporte sur un plus court
+    // (année, numéro de réservation), même un peu plus loin — à distance égale, le plus proche.
     let best = null;
-    let bestDist = Infinity;
+    let bestScore = Infinity;
     for (const c of candidates) {
       for (const p of phrases) {
         const dist = c.idx >= p.end ? c.idx - p.end : p.idx >= c.end ? p.idx - c.end : 0;
-        if (dist <= 60 && dist < bestDist) { bestDist = dist; best = c; }
+        if (dist > 60) continue;
+        const score = (c.digits.length === 6 ? 0 : 1000) + dist;
+        if (score < bestScore) { bestScore = score; best = c; }
       }
     }
     if (best) return best.digits;

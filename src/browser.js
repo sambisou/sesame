@@ -1063,6 +1063,16 @@ export async function fillLogin(page, site, secret, { submitForm = true, waitSec
 
   if (!onSite(page, site, pass.frame)) return await bail();
   await typeInto(pass.el, secret.password);
+  // Certaines pages (Booking) remontent le champ après coup et le vident : on relit la valeur
+  // avant de soumettre et on retape, au plus trois fois, en retrouvant le champ s'il a changé.
+  for (let essai = 0; essai < 3; essai++) {
+    await page.waitForTimeout(700);
+    const len = await pass.el.evaluate(e => (e.value || "").length).catch(() => -1);
+    if (len === secret.password.length) break;
+    const again = await locate(page, site, site.selectors?.password, PASS_SELECTORS).catch(() => null);
+    if (again && again.el) pass = again;
+    await typeInto(pass.el, secret.password).catch(() => {});
+  }
   steps.push(`mot de passe rempli${where(pass.frame)}`);
 
   let secondFactor = null;

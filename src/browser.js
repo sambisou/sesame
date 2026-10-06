@@ -655,14 +655,27 @@ async function tryAccountScreen(page, site, secret, steps, bail) {
  * première case et on tape au clavier, le composant passe seul d'une case à l'autre.
  */
 async function typeCode(page, el, code) {
-  const cases = await el.evaluate(n => {
+  const cases = await el.evaluateHandle(n => {
     const zone = n.closest("form") || n.parentElement?.parentElement || document;
     return [...zone.querySelectorAll("input")].filter(i => i.type !== "hidden" && i.offsetParent !== null
-      && (i.maxLength === 1 || /^(code|otp|digit|pin)[-_]?\d+$/i.test(i.name || i.id || ""))).length;
-  }).catch(() => 0);
-  if (cases >= 4) {
+      && (i.maxLength === 1 || /^(code|otp|digit|pin)[-_]?\d+$/i.test(i.name || i.id || "")));
+  }).catch(() => null);
+  const n = cases ? await cases.evaluate(l => l.length).catch(() => 0) : 0;
+  const chiffres = String(code);
+  if (n >= 4 && n === chiffres.length) {
+    // Une case par chiffre : on clique chaque case et on tape son chiffre, sans compter sur le passage
+    // automatique d'une case à l'autre (il perd des touches quand le composant est lent).
+    for (let i = 0; i < n; i++) {
+      const c = await cases.evaluateHandle((l, i) => l[i], i);
+      await c.asElement().click({ timeout: 5000 }).catch(() => {});
+      await page.keyboard.type(chiffres[i], { delay: 60 });
+      await page.waitForTimeout(120);
+    }
+    return;
+  }
+  if (n >= 4) {
     await el.click({ timeout: 5000 }).catch(() => {});
-    await page.keyboard.type(String(code), { delay: 80 });
+    await page.keyboard.type(chiffres, { delay: 120 });
     return;
   }
   await typeInto(el, code);

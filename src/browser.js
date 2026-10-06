@@ -662,6 +662,8 @@ async function typeCode(page, el, code) {
   }).catch(() => null);
   const n = cases ? await cases.evaluate(l => l.length).catch(() => 0) : 0;
   const chiffres = String(code);
+  // Diagnostic sans le code lui-même : seulement les longueurs (journal du moteur).
+  console.error(`[sesame] code à usage unique : ${chiffres.length} chiffres, ${n} case(s)`);
   if (n >= 4 && n === chiffres.length) {
     // Une case par chiffre : on clique chaque case et on tape son chiffre, sans compter sur le passage
     // automatique d'une case à l'autre (il perd des touches quand le composant est lent).
@@ -670,6 +672,19 @@ async function typeCode(page, el, code) {
       await c.asElement().click({ timeout: 5000 }).catch(() => {});
       await page.keyboard.type(chiffres[i], { delay: 60 });
       await page.waitForTimeout(120);
+    }
+    // Vérification : une case restée vide ou fausse est reprise par remplissage direct.
+    const vals = await cases.evaluate(l => l.map(i => i.value)).catch(() => null);
+    if (vals) {
+      for (let i = 0; i < n; i++) {
+        if (vals[i] === chiffres[i]) continue;
+        const c = await cases.evaluateHandle((l, i) => l[i], i);
+        await c.asElement().click({ timeout: 5000 }).catch(() => {});
+        await c.asElement().fill(chiffres[i], { timeout: 5000 }).catch(() => {});
+        await page.waitForTimeout(120);
+      }
+      const manque = await cases.evaluate((l, c) => l.filter((i, k) => i.value !== c[k]).length, chiffres).catch(() => -1);
+      console.error(`[sesame] code à usage unique : ${manque} case(s) non conforme(s) après saisie`);
     }
     return;
   }

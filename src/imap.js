@@ -429,7 +429,7 @@ function isExcludedNumber(text, idx, end, digits) {
   if (digits.length === 4 && /^(19|20)\d{2}$/.test(digits)) return true;
   const before = text[idx - 1] || "";
   const after = text[end] || "";
-  if ("€$%".includes(before) || "€$%".includes(after)) return true;
+  if ((before && "€$%".includes(before)) || (after && "€$%".includes(after))) return true;
   if (digits.length === 10 && digits[0] === "0") return true;
   const context = text.slice(Math.max(0, idx - 20), idx).toLowerCase();
   if (EXCLUDE_PREFIX_RE.test(context)) return true;
@@ -455,6 +455,23 @@ function extractCode(text) {
     if (isExcludedNumber(text, idx, end, digits)) continue;
     candidates.push({ digits, idx, end });
   }
+  // Code écrit en groupes (« 123 456 », « 12 34 56 », « 1 2 3 4 5 6 », « 123-456 ») : les groupes sont
+  // recollés. Seuls des groupes de même taille (1 à 3 chiffres) sont acceptés — une date ou un numéro
+  // de téléphone n'a pas cette forme — et le nombre obtenu suit les mêmes exclusions que les autres.
+  const groupRe = /(?<![\d])\d{1,3}(?:[ \u00a0\u202f\-\u2013.]\d{1,3}){1,7}(?![\d])/g;
+  while ((m = groupRe.exec(text))) {
+    const parts = m[0].split(/[^\d]/);
+    if (new Set(parts.map(x => x.length)).size !== 1) continue;
+    const digits = parts.join("");
+    if (digits.length < 4 || digits.length > 8) continue;
+    const idx = m.index;
+    const end = idx + m[0].length;
+    if (/[ \u00a0\u202f\-\u2013.]\d/.test(text.slice(end, end + 2))) continue;   // morceau d'une suite plus longue (date, téléphone)
+    if (isExcludedNumber(text, idx, end, digits)) continue;
+    if (candidates.some(c => c.idx < end && idx < c.end)) continue;
+    candidates.push({ digits, idx, end });
+  }
+  candidates.sort((a, b) => a.idx - b.idx);
   if (!candidates.length) return null;
 
   const phrases = [];

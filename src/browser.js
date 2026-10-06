@@ -118,9 +118,12 @@ async function launchChromeOnce({ waitMs = 15000 } = {}) {
   // Sur un écran virtuel sans gestionnaire de fenêtres (serveur), la fenêtre doit remplir l'écran
   // elle-même : SESAME_WINDOW="1440,1000". Sans cette variable (Mac), rien ne change.
   const fenetre = process.env.SESAME_WINDOW ? [`--window-size=${process.env.SESAME_WINDOW}`, "--window-position=0,0"] : [];
+  // Options supplémentaires du serveur (SESAME_CHROME_FLAGS, séparées par des espaces) : WebGL
+  // logiciel, langue… — un navigateur sans WebGL ni langue est noté « robot » par certains sites.
+  const extra = (process.env.SESAME_CHROME_FLAGS || "").split(/\s+/).filter(Boolean);
   const child = spawn(bin, [
     `--remote-debugging-port=${port}`, `--user-data-dir=${CHROME_PROFILE}`,
-    "--no-first-run", "--no-default-browser-check", "--password-store=basic", ...headless, ...fenetre, "about:blank",
+    "--no-first-run", "--no-default-browser-check", "--password-store=basic", ...headless, ...fenetre, ...extra, "about:blank",
   ], { detached: true, stdio: "ignore" });
   child.unref();
   launchedPid = child.pid;

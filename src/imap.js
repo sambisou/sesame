@@ -334,6 +334,54 @@ function parseHeaderBlock(raw) {
   return out;
 }
 
+/** Découpe un corps multipart en parties (texte des parties, sans les frontières) ; null si ce n'en est pas un. */
+function splitMimeParts(text) {
+  const lines = text.split(/\r?\n/);
+  const counts = new Map();
+  for (const l of lines) {
+    const m = /^--([!-~]{1,70}?)(--)?\s*$/.exec(l);
+    if (m) counts.set(m[1], (counts.get(m[1]) || 0) + 1);
+  }
+  const boundaries = [...counts.entries()].filter(([, n]) => n >= 2).map(([b]) => b);
+  if (!boundaries.length) return null;
+  const parts = [];
+  let cur = null;
+  for (const l of lines) {
+    const m = /^--([!-~]{1,70}?)(--)?\s*$/.exec(l);
+    if (m && boundaries.includes(m[1])) {
+      if (cur && cur.length) parts.push(cur.join("\n"));
+      cur = m[2] ? null : [];
+      continue;
+    }
+    if (cur) cur.push(l);
+  }
+  if (cur && cur.length) parts.push(cur.join("\n"));
+  return parts.length ? parts : null;
+}
+
+/** Décode une partie MIME (en-têtes + corps) d'après Content-Transfer-Encoding et charset ; "" si ce n'est pas du texte. */
+function decodeMimePart(part) {
+  const sep = part.search(/\r?\n\r?\n/);
+  if (sep < 0) return "";
+  const headers = parseHeaderBlock(part.slice(0, sep).replace(/\r?\n/g, "\r\n"));
+  const body = part.slice(sep).replace(/^\r?\n\r?\n/, "");
+  const type = (headers["content-type"] || "text/plain").toLowerCase();
+  if (type.startsWith("multipart/")) return "";                   // ses parties sont déjà découpées
+  if (!type.startsWith("text/")) return "";
+  const cte = (headers["content-transfer-encoding"] || "").toLowerCase().trim();
+  const charset = (/charset="?([\w-]+)"?/i.exec(type) || [])[1]?.toLowerCase() || "utf-8";
+  const latin = /^(iso-8859-1|iso-8859-15|windows-1252|latin1)$/.test(charset);
+  let bytes;
+  if (cte === "base64") {
+    try { bytes = Buffer.from(body.replace(/[^A-Za-z0-9+/=]/g, ""), "base64"); } catch { return ""; }
+  } else if (cte === "quoted-printable") {
+    return decodeQuotedPrintable(body);
+  } else {
+    bytes = Buffer.from(body, "latin1");
+  }
+  return bytes.toString(latin ? "latin1" : "utf8");
+}
+
 /** Décode les en-têtes encodés RFC 2047 : =?UTF-8?B?...?= / =?UTF-8?Q?...?= (utile au journal). */
 function decodeHeaderValue(v) {
   if (!v) return v;
@@ -373,6 +421,12 @@ function decodeQuotedPrintable(str) {
 function decodeBody(raw) {
   const trimmed = String(raw || "").trim();
   if (!trimmed) return "";
+
+  // Message en plusieurs parties (texte + HTML, chacune avec son propre encodage) : chaque partie
+  // est décodée selon ses en-têtes, puis le tout est réuni. Sinon la partie en base64 resterait
+  // un bloc illisible où des suites de chiffres apparaissent au hasard.
+  const parts = splitMimeParts(trimmed);
+  if (parts) return parts.map(decodeMimePart).filter(Boolean).join("\n");
 
   const qpSoftBreaks = (trimmed.match(/=\r?\n/g) || []).length;
   const qpMarkers = (trimmed.match(/=[0-9A-Fa-f]{2}/g) || []).length;
@@ -446,7 +500,7 @@ function isExcludedNumber(text, idx, end, digits) {
  */
 function extractCode(text) {
   const candidates = [];
-  const numRe = /(?<!\d)\d{4,8}(?!\d)/g;
+  const numRe = /(?<![\dA-Za-z])\d{4,8}(?![\dA-Za-z])/g;   // collé à des lettres = identifiant ou base64, pas un code
   let m;
   while ((m = numRe.exec(text))) {
     const digits = m[0];

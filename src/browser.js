@@ -649,6 +649,25 @@ async function tryAccountScreen(page, site, secret, steps, bail) {
   return null;
 }
 
+/**
+ * Saisit un code à usage unique. Beaucoup de sites (Booking) le présentent en cases séparées, une par
+ * chiffre : `fill()` mettrait tout dans la première et le composant le rejetterait. On clique alors la
+ * première case et on tape au clavier, le composant passe seul d'une case à l'autre.
+ */
+async function typeCode(page, el, code) {
+  const cases = await el.evaluate(n => {
+    const zone = n.closest("form") || n.parentElement?.parentElement || document;
+    return [...zone.querySelectorAll("input")].filter(i => i.type !== "hidden" && i.offsetParent !== null
+      && (i.maxLength === 1 || /^(code|otp|digit|pin)[-_]?\d+$/i.test(i.name || i.id || ""))).length;
+  }).catch(() => 0);
+  if (cases >= 4) {
+    await el.click({ timeout: 5000 }).catch(() => {});
+    await page.keyboard.type(String(code), { delay: 80 });
+    return;
+  }
+  await typeInto(el, code);
+}
+
 async function typeInto(el, value) {
   await el.click({ timeout: 5000 }).catch(() => {});
   await el.fill("", { timeout: 5000 }).catch(() => {});
@@ -833,7 +852,7 @@ export async function waitForSecondFactor(page, site, { timeoutSec = 180, messag
       if (hit && hit.code) {
         const field = await locateCode(page, site);
         if (field && onSite(page, site, field.frame)) {
-          await typeInto(field.el, hit.code);
+          await typeCode(page, field.el, hit.code);
           hit.code = "";                                   // oublié tout de suite
           autoFilled = true;
           await submit(page, site, field.el).catch(() => {});

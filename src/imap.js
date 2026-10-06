@@ -53,7 +53,7 @@ export async function findLoginCode(o) {
       EXPLICIT_RE.lastIndex = 0;
       const pm = EXPLICIT_RE.exec(chosen.searchText);
       const at = pm ? pm.index : 0;
-      const extrait = chosen.searchText.slice(Math.max(0, at - 80), at + 220).replace(/\d/g, "#").replace(/\s+/g, " ");
+      const extrait = chosen.searchText.slice(0, 2000).replace(/\d/g, "#").replace(/\s+/g, " ");   // texte entier (2 000 car. max), chiffres masqués
       console.error(`[sesame] mail ${chosen.uid || "?"} : ${chosen.searchText.length} car., code ${code ? code.length + " chiffres" : "absent"} ; extrait : ${extrait}`);
     } catch {}
     if (!code) return null;

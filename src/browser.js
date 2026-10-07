@@ -470,10 +470,21 @@ async function firstVisible(page, selectors, root = page) {
     const n = await loc.count().catch(() => 0);
     for (let i = 0; i < Math.min(n, 5); i++) {
       const el = loc.nth(i);
-      if (await el.isVisible().catch(() => false) && await el.isEditable().catch(() => true)) return el;
+      if (await el.isVisible().catch(() => false) && await el.isEditable().catch(() => true) && !(await ressembleAUneRecherche(el))) return el;
     }
   }
   return null;
+}
+
+/** Le champ de recherche du site (en-tête d'un grand écran) n'est jamais un identifiant. */
+async function ressembleAUneRecherche(el) {
+  return el.evaluate(e => {
+    if (e.tagName !== "INPUT") return false;
+    if ((e.type || "").toLowerCase() === "search") return true;
+    const t = [e.name, e.id, e.placeholder, e.getAttribute("aria-label"), e.getAttribute("autocomplete"), e.className]
+      .filter(Boolean).join(" ").toLowerCase();
+    return /search|recherch|cherch|suche|\bq\b/.test(t) || !!e.closest("form[role=search], [role=search]");
+  }).catch(() => false);
 }
 
 /** Cherche dans la frame principale puis dans les iframes AUTORISÉES (même site). Renvoie { el, frame } ou null. */

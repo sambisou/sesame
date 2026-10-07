@@ -705,6 +705,16 @@ async function typeCode(page, el, code) {
 async function typeInto(el, value) {
   await el.click({ timeout: 5000 }).catch(() => {});
   await el.fill("", { timeout: 5000 }).catch(() => {});
+  // Au clavier, touche par touche, comme une personne : certains formulaires (Booking, page
+  // partenaire) ignorent une valeur posée d'un bloc et n'envoient alors rien au clic. `fill`
+  // reste le repli si la frappe n'a pas pris (champ remonté entre-temps, sélecteur exotique).
+  const page = typeof el.page === "function" ? el.page() : null;
+  if (page && value.length <= 200) {
+    await el.pressSequentially(value, { delay: 25, timeout: 15000 }).catch(() => {});
+    const lu = await el.inputValue({ timeout: 2000 }).catch(() => null);
+    if (lu === value) return;
+    await el.fill("", { timeout: 5000 }).catch(() => {});
+  }
   await el.fill(value, { timeout: 5000 });
 }
 

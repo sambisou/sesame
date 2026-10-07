@@ -703,14 +703,15 @@ async function typeCode(page, el, code) {
 }
 
 async function typeInto(el, value) {
-  await el.click({ timeout: 5000 }).catch(() => {});
+  const clique = await el.click({ timeout: 5000 }).then(() => true).catch(() => false);
   await el.fill("", { timeout: 5000 }).catch(() => {});
-  // Au clavier, touche par touche, comme une personne : certains formulaires (Booking, page
-  // partenaire) ignorent une valeur posée d'un bloc et n'envoient alors rien au clic. `fill`
-  // reste le repli si la frappe n'a pas pris (champ remonté entre-temps, sélecteur exotique).
+  // Un mot de passe se tape touche par touche, comme une personne, quand le champ a bien reçu le
+  // clic : certains formulaires (Booking, page partenaire) ignorent une valeur posée d'un bloc.
+  // Sinon, et pour tout le reste, `fill` (fiable, ne dépend pas du focus).
+  const type = await el.getAttribute("type").catch(() => "");
   const page = typeof el.page === "function" ? el.page() : null;
-  if (page && value.length <= 200) {
-    await el.pressSequentially(value, { delay: 25, timeout: 15000 }).catch(() => {});
+  if (clique && page && type === "password" && value.length <= 200) {
+    await page.keyboard.type(value, { delay: 25 }).catch(() => {});
     const lu = await el.inputValue({ timeout: 2000 }).catch(() => null);
     if (lu === value) return;
     await el.fill("", { timeout: 5000 }).catch(() => {});
@@ -718,23 +719,46 @@ async function typeInto(el, value) {
   await el.fill(value, { timeout: 5000 });
 }
 
+/** Bandeau de cookies qui recouvre la page : on refuse (le choix le plus sobre) s'il y a un bouton pour ça. */
+async function ecarterBandeauCookies(page) {
+  const motifs = /^(continuer sans accepter|refuser( tout)?|tout refuser|decline( all)?|reject( all)?|alles ablehnen|ablehnen)$/i;
+  for (const frame of [page, ...page.frames()]) {
+    try {
+      const boutons = frame.locator("button, a[role=button], [role=button]");
+      const n = Math.min(await boutons.count(), 40);
+      for (let i = 0; i < n; i++) {
+        const b = boutons.nth(i);
+        const t = ((await b.innerText({ timeout: 500 }).catch(() => "")) || "").trim();
+        if (motifs.test(t) && await b.isVisible().catch(() => false)) {
+          await b.click({ timeout: 3000 }).catch(() => {});
+          await page.waitForTimeout(500);
+          return t;
+        }
+      }
+    } catch { /* cadre fermé entre-temps */ }
+  }
+  return null;
+}
+
 /** Le bouton de soumission est cherché près du champ rempli (son <form>, puis ses conteneurs), pas n'importe où dans la page. */
 async function submit(page, site, lastField) {
   if (site.selectors?.submit) {
     const hit = await locate(page, site, site.selectors.submit, []);
-    if (hit) { await hit.el.click({ timeout: 5000 }).catch(() => {}); return "bouton"; }
+    if (hit && await hit.el.click({ timeout: 5000 }).then(() => true).catch(() => false)) return "bouton";
   }
   if (lastField) {
     const form = lastField.locator("xpath=ancestor::form[1]");
+    // Un clic qui n'aboutit pas (bouton recouvert, page qui bouge) ne vaut pas soumission : Entrée.
+    const cliquer = async btn => btn.click({ timeout: 5000 }).then(() => true).catch(() => false);
     if ((await form.count().catch(() => 0)) > 0) {
       const btn = await firstVisible(page, SUBMIT_SELECTORS, form);
-      if (btn) { await btn.click({ timeout: 5000 }).catch(() => {}); return "bouton"; }
+      if (btn && await cliquer(btn)) return "bouton";
     } else {
       for (let i = 1; i <= 6; i++) {
         const box = lastField.locator(`xpath=ancestor::*[${i}]`);
         if ((await box.count().catch(() => 0)) === 0) break;
         const btn = await firstVisible(page, SUBMIT_SELECTORS, box);
-        if (btn) { await btn.click({ timeout: 5000 }).catch(() => {}); return "bouton"; }
+        if (btn && await cliquer(btn)) return "bouton";
       }
     }
     await lastField.press("Enter").catch(() => {});
@@ -928,6 +952,9 @@ export async function waitForSecondFactor(page, site, { timeoutSec = 180, messag
  */
 export async function fillLogin(page, site, secret, { submitForm = true, waitSecondFactor = true, secondFactorTimeoutSec = 180, onSecondFactor, autoCode } = {}) {
   const steps = [];
+  // Un bandeau de cookies qui recouvre la page fait rater les clics (champ, bouton) : on le refuse d'abord.
+  const bandeau = await ecarterBandeauCookies(page).catch(() => null);
+  if (bandeau) steps.push(`bandeau de cookies refusé (« ${bandeau} »)`);
   const where = frame => (frame && frame !== page.mainFrame() ? ` (iframe ${publicUrl(frame.url())})` : "");
   const gone = hostname => ({ ok: false, steps, url: publicUrl(page.isClosed() ? "" : page.url()), reason: `onglet parti vers ${hostname || "une autre page"} : remplissage abandonné` });
   /**

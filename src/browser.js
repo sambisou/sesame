@@ -1172,6 +1172,34 @@ export async function fillLogin(page, site, secret, { submitForm = true, waitSec
     }
   }
 
+  // Page liée à un compte DÉJÀ choisi (un mot de passe, aucun champ identifiant) : vérifier que c'est bien
+  // le nôtre AVANT de taper. Sans ce garde-fou, Sésame a tapé le mot de passe partenaire de Booking sur la
+  // page du compte VOYAGEUR resté connecté dans ce navigateur — un vrai mot de passe envoyé au mauvais compte.
+  if (!user && secret.username) {
+    const shown = findAccountCandidates(await accountDisplayText(page, site));
+    if (shown.length && !shown.some(c => accountMatches(c, secret.username))) {
+      steps.push("page liée à un autre compte que celui enregistré : rien saisi, tentative de changement de compte");
+      const handled = await tryAccountScreen(page, site, secret, steps, bail);
+      if (handled?.finished) return handled.result;
+      const userAgain = secret.username ? await locateUser(page, site) : null;
+      const passAgain = await locate(page, site, site.selectors?.password, PASS_SELECTORS);
+      if (!userAgain) {
+        return { ok: false, steps, url: publicUrl(page.url()),
+          reason: `Cette page demande le mot de passe d'un AUTRE compte que celui enregistré pour « ${site.key} » : une session d'un autre compte est ouverte dans ce navigateur. Rien n'a été saisi. Déconnecte ce compte, ou ouvre directement la page de connexion du bon espace.` };
+      }
+      if (!onSite(page, site, userAgain.frame)) return await bail();
+      await typeInto(userAgain.el, secret.username);
+      steps.push(`identifiant rempli après changement de compte${where(userAgain.frame)}`);
+      user = userAgain;
+      if (passAgain) pass = passAgain;
+      else {
+        const found = await (async () => { for (let i = 0; i < 16; i++) { await page.waitForTimeout(500); const h = await locate(page, site, site.selectors?.password, PASS_SELECTORS); if (h) return h; } return null; })();
+        if (!found) return { ok: false, steps, url: publicUrl(page.url()), reason: "Après changement de compte, le champ mot de passe n'est pas réapparu." };
+        pass = found;
+      }
+    }
+  }
+
   if (!onSite(page, site, pass.frame)) return await bail();
   await typeInto(pass.el, secret.password);
   // Certaines pages (Booking) remontent le champ après coup et le vident : on relit la valeur
@@ -1239,6 +1267,19 @@ export async function fillLogin(page, site, secret, { submitForm = true, waitSec
         }
       }
     }
+  }
+
+  // Certaines connexions aboutissent « quelque part » sur le même domaine sans être la bonne : l'extranet
+  // partenaire de Booking et son site voyageur partagent booking.com. `successUrl` dit où l'on doit arriver.
+  if (site.successUrl && !page.isClosed()) {
+    const landed = page.url();
+    let okHere = false;
+    try { okHere = new RegExp(site.successUrl, "i").test(landed); } catch { okHere = landed.includes(site.successUrl); }
+    if (!okHere) {
+      return { ok: false, steps, url: publicUrl(landed),
+        reason: `La connexion a abouti, mais sur ${publicUrl(landed)} au lieu de l'espace attendu pour « ${site.key} » (${site.successUrl}). C'est probablement le mauvais compte ou le mauvais espace.` };
+    }
+    steps.push("arrivé dans l'espace attendu");
   }
 
   return {

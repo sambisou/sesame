@@ -53,6 +53,18 @@ const SWITCH_TEXT_RE = /changer de compte|autre compte|use another account|switc
 const LOGOUT_TEXT_RE = /d[ée]connexion|logout|sign out|supprimer/i;
 // Entrée vers le formulaire quand il est caché derrière un bouton ou un lien (« ESPACE PRIVÉ » chez CM2C,
 // « Se connecter » dans l'en-tête de beaucoup de sites). Jamais une création de compte ni une déconnexion.
+// Connexion par fournisseur d'identité (« Sign in with Google »…). Sésame peut CLIQUER ce bouton et
+// laisser la session déjà ouverte dans son navigateur terminer ; il n'y tape JAMAIS d'identifiant — la page
+// du fournisseur est hors du périmètre du site, et onSite() interdit déjà toute frappe hors périmètre.
+const PROVIDERS = {
+  google:    { label: "Google",    re: /(se connecter|connexion|continuer|s'identifier|sign ?in|log ?in|continue)\s*(avec|with|via)?\s*google|google\s*(sign|log)\s*-?\s*in/i },
+  apple:     { label: "Apple",     re: /(se connecter|continuer|sign ?in|continue)\s*(avec|with|via)?\s*apple/i },
+  github:    { label: "GitHub",    re: /(se connecter|continuer|sign ?in|continue)\s*(avec|with|via)?\s*github/i },
+  microsoft: { label: "Microsoft", re: /(se connecter|continuer|sign ?in|continue)\s*(avec|with|via)?\s*(microsoft|azure|office ?365)/i },
+};
+/** Le site dit-il lui-même que ce compte passe par une authentification unique ? */
+const SSO_TEXT_RE = /single sign-?on|\bSSO\b|authentification unique|identity provider|fournisseur d'identit[ée]|votre organisation|your organization('s)? (identity|sign-?in)/i;
+
 const LOGIN_ENTRY_RE = /se connecter|connexion|espace priv[ée]|identifiez-vous|mon compte|my account|log ?in|sign ?in/i;
 const LOGIN_ENTRY_EXCLUDE_RE = /cr[ée]er|inscri|nouveau compte|register|sign ?up|d[ée]connexion|log ?out|sign ?out|aide|assistance|oubli/i;
 // Signe d'une session DÉJÀ OUVERTE : la page offre de se déconnecter. Volontairement strict — « Mon compte »
@@ -372,6 +384,25 @@ export async function claimSiteTab(browser, site, { onEvent = () => {} } = {}) {
     onEvent({ result: "étape", detail: `${extras.length} onglet(s) en double fermé(s) pour « ${site.key} » — un seul onglet par site` });
   }
   return keep.isClosed() ? null : keep;
+}
+
+/**
+ * Le bouton « se connecter avec <fournisseur> » sur cette page, s'il y est. `which` limite la recherche à un
+ * fournisseur ; sans lui, on les essaie tous et on renvoie le premier trouvé.
+ * Renvoie { hit, provider } ou null.
+ */
+async function findProviderButton(page, site, which) {
+  if (page.isClosed()) return null;
+  if (site.selectors?.providerSel) {
+    const hit = await locate(page, site, site.selectors.providerSel, []);
+    if (hit) return { hit, provider: which || site.authProvider || "google" };
+  }
+  for (const [name, p] of Object.entries(PROVIDERS)) {
+    if (which && name !== which) continue;
+    const hit = await findClickableByText(page, site, p.re, LOGIN_ENTRY_EXCLUDE_RE);
+    if (hit) return { hit, provider: name };
+  }
+  return null;
 }
 
 /**
@@ -987,6 +1018,35 @@ export async function fillLogin(page, site, secret, { submitForm = true, waitSec
   // Pas de passage au premier plan : la connexion se fait en arrière-plan, Chrome ne vient devant que pour un code.
   await page.waitForLoadState("domcontentloaded", { timeout: 10000 }).catch(() => {});
 
+  // Site déclaré « connexion par fournisseur d'identité » : on clique son bouton et on laisse la session
+  // déjà ouverte dans ce navigateur terminer. Sésame ne tape RIEN chez le fournisseur : si celui-ci demande
+  // un compte, un mot de passe ou un code, on s'arrête et on le dit.
+  if (site.authProvider) {
+    const found = await findProviderButton(page, site, site.authProvider);
+    if (!found) {
+      if (await looksSignedIn(page, site)) {
+        steps.push("session déjà ouverte : rien à faire");
+        return { ok: true, steps, url: publicUrl(page.url()), title: await page.title().catch(() => ""), alreadySignedIn: true };
+      }
+      return { ok: false, steps, url: publicUrl(page.url()),
+        reason: `« ${site.key} » se connecte par ${PROVIDERS[site.authProvider]?.label || site.authProvider}, mais le bouton n'est pas sur cette page. Ouvre-la toi-même, ou corrige le sélecteur (providerSel).` };
+    }
+    const label = PROVIDERS[found.provider]?.label || found.provider;
+    await found.hit.el.click({ timeout: 5000 }).catch(() => {});
+    steps.push(`« se connecter avec ${label} » cliqué`);
+    await page.waitForLoadState("networkidle", { timeout: 20000 }).catch(() => {});
+    await page.waitForTimeout(1500);
+    // Revenu sur le site et connecté : la session du fournisseur a suffi.
+    if (siteMatchesUrl(site, page.url()) && !(await hasLoginFields(page, site))) {
+      steps.push(`connexion par ${label} acceptée`);
+      return { ok: true, steps, url: publicUrl(page.url()), title: await page.title().catch(() => ""), viaProvider: found.provider };
+    }
+    // Toujours chez le fournisseur : il demande quelque chose. On n'y touche pas.
+    const where = publicUrl(page.url());
+    return { ok: false, steps, url: where, needsProvider: found.provider,
+      reason: `${label} demande une intervention (choix du compte, mot de passe, code ou validation) sur ${where}. Sésame ne saisit jamais rien chez un fournisseur d'identité : ouvre cette page et termine la connexion, elle restera ouverte ensuite.` };
+  }
+
   let user = secret.username ? await locateUser(page, site) : null;
   let pass = await locate(page, site, site.selectors?.password, PASS_SELECTORS);
 
@@ -1135,10 +1195,19 @@ export async function fillLogin(page, site, secret, { submitForm = true, waitSec
     // Laisser le site basculer avant de juger : mot de passe refusé ou 2e facteur ?
     const passwordGone = await waitPasswordGone(page, site, 8000);
     if (!passwordGone) {
-      // Le formulaire est toujours là : on ne laisse pas le mot de passe dans la page.
+      // Le formulaire est toujours là : la connexion n'a PAS abouti. On vide le champ, puis on répond un
+      // échec — longtemps Sésame renvoyait « ok » avec un simple indice, et l'IA annonçait une réussite.
       const still = await locate(page, site, site.selectors?.password, PASS_SELECTORS);
       if (still) await still.el.fill("").catch(() => {});
-      hint = "Un champ mot de passe est encore visible : identifiants refusés ou captcha probable (champ vidé).";
+      const body = await page.evaluate(() => document.body?.innerText || "").catch(() => "");
+      const prov = await findProviderButton(page, site);
+      if (SSO_TEXT_RE.test(body) || prov) {
+        const label = prov ? (PROVIDERS[prov.provider]?.label || prov.provider) : "un fournisseur d'identité";
+        return { ok: false, steps, url: publicUrl(page.url()), needsProvider: prov?.provider || "sso",
+          reason: `« ${site.key} » n'a pas de mot de passe : ce compte se connecte par ${label} (authentification unique). Le mot de passe a été refusé. Déclare le site avec authProvider pour que Sésame clique ce bouton au lieu d'essayer un mot de passe.` };
+      }
+      return { ok: false, steps, url: publicUrl(page.url()),
+        reason: "Le mot de passe a été refusé, ou un captcha s'est interposé : le champ est encore affiché après soumission (il a été vidé)." };
     } else if (!page.isClosed()) {
       await page.waitForTimeout(800);
       const sf = await detectSecondFactor(page, site);

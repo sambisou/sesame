@@ -66,6 +66,8 @@ const PROVIDERS = {
 const SSO_TEXT_RE = /single sign-?on|\bSSO\b|authentification unique|identity provider|fournisseur d'identit[ée]|votre organisation|your organization('s)? (identity|sign-?in)/i;
 
 const LOGIN_ENTRY_RE = /se connecter|connexion|espace priv[ée]|identifiez-vous|mon compte|my account|log ?in|sign ?in/i;
+// Entrée « se connecter » d'une page publique, pour un site fournisseur (sans « mon compte » : il figure aussi sur une session ouverte).
+const PROVIDER_ENTRY_RE = /se connecter|connexion|identifiez-vous|log ?in|sign ?in/i;
 const LOGIN_ENTRY_EXCLUDE_RE = /cr[ée]er|inscri|nouveau compte|register|sign ?up|d[ée]connexion|log ?out|sign ?out|aide|assistance|oubli/i;
 // Signe d'une session DÉJÀ OUVERTE : la page offre de se déconnecter. Volontairement strict — « Mon compte »
 // ou « Connexion » figurent aussi sur les pages déconnectées, un lien de déconnexion non.
@@ -1126,9 +1128,24 @@ export async function fillLogin(page, site, secret, { submitForm = true, waitSec
   // déjà ouverte dans ce navigateur terminer. Sésame ne tape RIEN chez le fournisseur : si celui-ci demande
   // un compte, un mot de passe ou un code, on s'arrête et on le dit.
   if (isProviderSite(site)) {
-    const found = await findProviderButton(page, site, site.authProvider);
+    let found = await findProviderButton(page, site, site.authProvider);
     if (!found) {
-      if (await looksSignedIn(page, site)) {
+      // Pas de bouton fournisseur : page d'accueil publique où le site a renvoyé la page de connexion
+      // (Indeed : employers.indeed.com → fr.indeed.com/recrutement/cs). Une page publique propose toujours
+      // « Se connecter » ; une session ouverte, non. On clique cette entrée, une fois, avant de conclure
+      // « déjà connecté » — la redirection hors page de connexion seule n'est PAS une preuve de session.
+      const entry = await findClickableByText(page, site, PROVIDER_ENTRY_RE, LOGIN_ENTRY_EXCLUDE_RE);
+      if (entry && onSite(page, site, entry.frame)) {
+        await entry.el.click({ timeout: 5000 }).catch(() => {});
+        const msg = "entrée « se connecter » cliquée pour atteindre le bouton du fournisseur";
+        steps.push(msg); onStep?.({ detail: msg });
+        await page.waitForLoadState("networkidle", { timeout: 15000 }).catch(() => {});
+        await page.waitForTimeout(1200);
+        found = await findProviderButton(page, site, site.authProvider);
+      }
+    }
+    if (!found) {
+      if (!(await findClickableByText(page, site, PROVIDER_ENTRY_RE, LOGIN_ENTRY_EXCLUDE_RE)) && await looksSignedIn(page, site)) {
         steps.push("session déjà ouverte : rien à faire");
         return { ok: true, steps, url: publicUrl(page.url()), title: await page.title().catch(() => ""), alreadySignedIn: true };
       }

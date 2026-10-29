@@ -18,6 +18,11 @@ const srv = http.createServer((q, r) => {
   if (u === "/dashboard") { if (q.url.includes("as=")) choisi = decodeURIComponent(q.url.split("as=")[1]); return r.end('<h1>Tableau de bord</h1><a href="/logout">Deconnexion</a>'); }
   if (u === "/consent-click") { consentCliques++; return r.end("ok"); }
   if (u === "/google-login") return r.end('<h1>Mon site</h1><a href="https://accounts.google.com/signin/chooser">Se connecter avec Google</a>');
+  // Vitrine publique : le site renvoie sa page de connexion vers une page « interne » SANS formulaire ni déconnexion
+  // (Indeed : employers.indeed.com → fr.indeed.com/recrutement/cs). Ce n'est PAS une session ouverte.
+  if (u === "/vitrine-login") { r.writeHead(302, { location: "/recrutement/cs" }); return r.end(); }
+  if (u === "/recrutement/cs") return r.end('<h1>Publier une offre</h1><a href="/auth">Se connecter</a><a href="/creer">Créer un compte employeur</a>');
+  if (u === "/auth") return r.end('<h1>Connexion</h1><a href="https://accounts.google.com/signin/chooser">Continuer avec Google</a>');
   if (u === "/idp") {   // le « fournisseur » : s'il a une session, il renvoie au site ; sinon il demande
     if (sessionOuverte) { r.writeHead(302, { location: "/dashboard" }); return r.end(); }
     return r.end('<h1>Connexion Google</h1><input name="email" id="email"><input type="password" id="password"><button>Suivant</button>');
@@ -123,6 +128,30 @@ try {
     assert.deepEqual(await p.evaluate(() => [...document.querySelectorAll("input")].map(e => e.value)), [""], "aucun champ rempli");
     await ctx.close();
     console.log("  6 écran de consentement → arrêt « consentement à donner une fois par Sam », bouton non cliqué");
+  }
+
+  // 4b. Vitrine publique (redirection hors page de connexion, ni formulaire ni déconnexion) : jamais « déjà connecté ».
+  {
+    ecran = CHOOSER; choisi = null;
+    const ctx = await googleCtx(); const p = await ctx.newPage(); await p.goto(`${base}/vitrine-login`);
+    const logged = [];
+    const r = await fillLogin(p, providerSite({ loginUrl: `${base}/vitrine-login`, account: "sampwieder@gmail.com" }), { username: "sampwieder@gmail.com", password: "" }, { waitSecondFactor: false, onStep: d => logged.push(d.detail) });
+    assert.equal(r.ok, true, `attendu un succès : ${r.reason}`);
+    assert.equal(r.alreadySignedIn, undefined, "une vitrine publique n'est pas une session ouverte");
+    assert.equal(r.viaProvider, "google");
+    assert.equal(choisi, "sampwieder@gmail.com");
+    assert.ok(r.steps.some(x => /entrée « se connecter »/.test(x)), `étapes : ${JSON.stringify(r.steps)}`);
+    await ctx.close();
+    console.log("  4b vitrine publique → entrée « Se connecter » cliquée, bouton Google, tuile du bon compte (pas de faux « déjà connecté »)");
+  }
+  // 4c. Vraie session ouverte (tableau de bord, déconnexion visible, aucune entrée « Se connecter ») : toujours « déjà connecté ».
+  {
+    const ctx = await googleCtx(); const p = await ctx.newPage(); await p.goto(`${base}/dashboard`);
+    const r = await fillLogin(p, providerSite({ loginUrl: `${base}/dashboard` }), { username: "", password: "" }, { waitSecondFactor: false });
+    assert.equal(r.ok, true, `attendu un succès : ${r.reason}`);
+    assert.equal(r.alreadySignedIn, true);
+    await ctx.close();
+    console.log("  4c tableau de bord avec déconnexion → « déjà connecté » conservé");
   }
 
   // --- Par login() : site fournisseur SANS entrée Trousseau, jamais de lecture du secret, jamais par l'extension.

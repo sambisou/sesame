@@ -1,7 +1,7 @@
 // Orchestration d'une connexion : politique → validation → Chrome → remplissage → journal.
 import fs from "node:fs";
 import path from "node:path";
-import { HOME, getSite, loadSites, saveSites, normalizeName, siteDomainFor, assertLoginUrl, validateExtraDomain } from "./config.js";
+import { HOME, getSite, loadSites, saveSites, normalizeName, siteDomainFor, assertLoginUrl, validateExtraDomain, isProviderSite, normalizeAccount, AUTH_PROVIDERS } from "./config.js";
 import { getSecret, hasSecret, setSecret, keychainAvailable, KeychainWaitingError } from "./keychain.js";
 import { logEvent } from "./journal.js";
 import { isLocked, askHuman, askAccess, askText, notify, notifyWaitingCode, channelLabel, barAlive } from "./policy.js";
@@ -90,15 +90,24 @@ export async function login({ site: siteName, submit = true, openIfMissing = tru
     logEvent({ ...base, result: "refusé", detail: "accès révoqué pour ce site" });
     return { ok: false, message: `Accès à « ${site.key} » révoqué par l'utilisateur. (sesame policy ${site.key} ask|always pour rouvrir)` };
   }
-  if (!hasSecret(site.key)) {
+  // Site connecté par un fournisseur d'identité : aucun secret dans le Trousseau, jamais lu. Le compte du
+  // fournisseur a sa session dans le Chrome Sésame, qui est donc le seul canal (voir fillLogin).
+  const viaProviderSite = isProviderSite(site);
+  if (!viaProviderSite && !hasSecret(site.key)) {
     logEvent({ ...base, result: "erreur", detail: "aucun identifiant dans le Trousseau" });
     return { ok: false, message: `Aucun identifiant enregistré pour « ${site.key} » (sesame add ${site.key}).` };
   }
 
   // Canal : l'extension dans le Chrome habituel si elle répond (mode auto/extension), sinon le Chrome Sésame.
   // Décidé avant le dialogue, pour que celui-ci nomme le Chrome où les identifiants seront tapés.
+  // Un site fournisseur ne passe JAMAIS par l'extension : la session du fournisseur vit dans le Chrome Sésame,
+  // et l'extension n'a pas de clic « fournisseur » (elle ne sait que remplir identifiant et mot de passe).
   const mode = browserMode();
-  const viaExtension = mode !== "chrome-profile" && await extensionReady();
+  if (viaProviderSite && mode === "extension") {
+    logEvent({ ...base, result: "erreur", detail: "site fournisseur incompatible avec SESAME_BROWSER=extension (la session du fournisseur est dans le Chrome Sésame)" });
+    return { ok: false, message: `« ${site.key} » se connecte par ${site.authProvider} : la session du fournisseur vit dans le Chrome Sésame, pas dans l'extension. Passe SESAME_BROWSER=auto (ou chrome-profile) pour ce site.` };
+  }
+  const viaExtension = !viaProviderSite && mode !== "chrome-profile" && await extensionReady();
   if (!viaExtension && mode === "extension") {
     logEvent({ ...base, result: "erreur", detail: "extension Chrome injoignable (SESAME_BROWSER=extension, pas de repli)" });
     return { ok: false, message: "L'extension Sésame ne répond pas : ouvre Chrome avec l'extension Sésame activée, ou passe SESAME_BROWSER=auto pour autoriser le Chrome Sésame." };
@@ -228,10 +237,15 @@ export async function login({ site: siteName, submit = true, openIfMissing = tru
         logEvent({ ...base, result: "étape", detail: "onglet du site sans formulaire — retour sur la page de connexion dans ce même onglet" });
         await gotoLogin(page, loginUrl, site);
       }
-      logEvent({ ...base, result: "étape", detail: `page prête (${publicUrl(page.url())}) — lecture du Trousseau` });
-
-      secret = secret || readSecret(site.key, { caller });
-      logEvent({ ...base, result: "étape", detail: "identifiants lus — remplissage du formulaire" });
+      if (viaProviderSite) {
+        // Aucun secret : le compte à choisir chez le fournisseur n'est qu'une adresse affichée, pas un identifiant à taper.
+        logEvent({ ...base, result: "étape", detail: `page prête (${publicUrl(page.url())}) — connexion par ${site.authProvider}, aucun secret lu` });
+        secret = secret || { username: site.account || "", password: "" };
+      } else {
+        logEvent({ ...base, result: "étape", detail: `page prête (${publicUrl(page.url())}) — lecture du Trousseau` });
+        secret = secret || readSecret(site.key, { caller });
+        logEvent({ ...base, result: "étape", detail: "identifiants lus — remplissage du formulaire" });
+      }
       const onSecondFactor = sf => {
         logEvent({ ...base, action: "2fa", result: "attente", detail: `code demandé par le site (${sf.detail}) — l'utilisateur doit le saisir` });
         notifyWaitingCode(site.key, { detail: sf.kind === "champ" ? "" : sf.detail, timeoutSec: codeTimeoutSec, channel: "chrome-profile" });
@@ -244,7 +258,7 @@ export async function login({ site: siteName, submit = true, openIfMissing = tru
         if (hit) logEvent({ ...base, action: "mail", result: "ok", detail: `code récupéré dans la boîte « ${hit.mailbox} » (de ${hit.from}) et saisi` });
         return hit;
       };
-      res = await fillLogin(page, site, secret, { submitForm: submit, waitSecondFactor: waitForCode, secondFactorTimeoutSec: codeTimeoutSec, onSecondFactor, autoCode });
+      res = await fillLogin(page, site, secret, { submitForm: submit, waitSecondFactor: waitForCode, secondFactorTimeoutSec: codeTimeoutSec, onSecondFactor, autoCode, onStep: d => logEvent({ ...base, action: "provider", result: d.result || "étape", detail: d.detail }) });
       res.opened = opened;
 
       // Apprentissage assisté : l'onglet est parti hors périmètre, mais un mot de passe attend déjà sur le
@@ -252,15 +266,7 @@ export async function login({ site: siteName, submit = true, openIfMissing = tru
       if (!res.ok && res.needsDomain) {
         const approved = await approveExtraDomain({ site, domain: res.needsDomain, base });
         if (approved) {
-          // Code envoyé par e-mail : Sésame va le chercher dans la boîte de l'utilisateur et le tape lui-même.
-      // Le code ne transite ni par l'IA ni par le journal — seulement « code récupéré dans la boîte ».
-      const startedAt = new Date();
-      const autoCode = mailboxes().length === 0 ? undefined : async () => {
-        const hit = await findCodeForSite(site, startedAt, { onEvent: d => logEvent({ ...base, action: "mail", result: d.result, detail: d.detail }) });
-        if (hit) logEvent({ ...base, action: "mail", result: "ok", detail: `code récupéré dans la boîte « ${hit.mailbox} » (de ${hit.from}) et saisi` });
-        return hit;
-      };
-      res = await fillLogin(page, site, secret, { submitForm: submit, waitSecondFactor: waitForCode, secondFactorTimeoutSec: codeTimeoutSec, onSecondFactor, autoCode });
+          res = await fillLogin(page, site, secret, { submitForm: submit, waitSecondFactor: waitForCode, secondFactorTimeoutSec: codeTimeoutSec, onSecondFactor, autoCode });
           res.opened = opened;
         }
       }
@@ -364,6 +370,8 @@ function normalizeReady(r) {
  * "unauthenticated") — la session est alors déjà refermée. Aucun secret ne circule ici.
  */
 async function prepareViaExtension(site) {
+  // Garde-fou : un site fournisseur n'a rien à faire dans l'extension (login() l'écarte déjà en amont).
+  if (isProviderSite(site)) return { cause: "site fournisseur : jamais par l'extension", code: "provider" };
   let session;
   try {
     session = await openBridgeSession();
@@ -389,6 +397,7 @@ async function prepareViaExtension(site) {
  * reconnecter vers un autre pair). Referme la session dans tous les cas.
  */
 async function fillViaExtension(session, jobId, secret, { submit, waitForCode, codeTimeoutSec }) {
+  if (!secret) { session.close(); return { cause: "aucun secret à envoyer (site fournisseur ?)", code: "provider" }; }
   const payload = {
     jobId, username: secret.username, password: secret.password,
     submit: !!submit, waitCode: !!waitForCode, codeTimeoutSec,
@@ -556,15 +565,28 @@ export async function waitCode({ site: siteName, timeoutSec = 180, caller = "mcp
  * @param {string[]} [o.extraDomains] domaines supplémentaires (fournisseur d'identité sur un autre domaine
  *   enregistrable, ex. Expedia : expediapartnercentral.com → expediagroup.com pour le mot de passe) ;
  *   validés (siteDomainFor, pas d'IP sauf hôte local, pas dans SHARED_SUFFIXES, pas le domaine principal)
+ * @param {string} [o.authProvider] google | apple | microsoft | github : le site se connecte par ce fournisseur
+ *   d'identité — aucun mot de passe, rien dans le Trousseau ; Sésame clique le bouton et le compte choisi chez lui
+ * @param {string} [o.account] adresse e-mail du compte à choisir chez le fournisseur (facultatif)
  * @param {object} [o.ui]     surcharge des dialogues pour les tests : { confirm, text }
  */
-export async function requestSite({ site: siteName, url, reason = "", note, caller = "mcp", replace = false, extraDomains, ui } = {}) {
+export async function requestSite({ site: siteName, url, reason = "", note, caller = "mcp", replace = false, extraDomains, authProvider, account, ui } = {}) {
   const key = normalizeName(siteName || "");
   const base = { site: key || undefined, action: "request_site", caller };
   if (!key) return { ok: false, message: "Nom de site manquant (ex. « infomaniak »)." };
   try { assertLoginUrl(url); } catch (e) { return { ok: false, message: e.message }; }
   const domain = siteDomainFor(url);
   if (!domain) return { ok: false, message: `URL de connexion invalide : ${url || "(vide)"}.` };
+
+  if (authProvider != null && authProvider !== "" && !AUTH_PROVIDERS.includes(authProvider)) {
+    return { ok: false, message: `Fournisseur inconnu : « ${authProvider} » (attendu : ${AUTH_PROVIDERS.join(", ")}).` };
+  }
+  const provider = authProvider || undefined;
+  let acct;
+  if (account != null && String(account).trim() !== "") {
+    acct = normalizeAccount(account);
+    if (!acct) return { ok: false, message: `Compte invalide : « ${account} » (attendu : une adresse e-mail).` };
+  }
 
   const validExtraDomains = [];
   if (Array.isArray(extraDomains)) {
@@ -579,11 +601,12 @@ export async function requestSite({ site: siteName, url, reason = "", note, call
     logEvent({ ...base, result: "refusé", detail: "verrou global actif" });
     return { ok: false, message: "Sésame est verrouillé (sesame unlock pour rouvrir)." };
   }
-  if (!keychainAvailable()) return { ok: false, message: "Trousseau macOS indisponible : Sésame ne fonctionne que sur Mac." };
+  if (!provider && !keychainAvailable()) return { ok: false, message: "Trousseau macOS indisponible : Sésame ne fonctionne que sur Mac." };
 
   const sites = loadSites();
   const existing = sites[key];
-  if (existing && hasSecret(key) && !replace) {
+  // Un site fournisseur n'a pas de secret : « enregistré » veut dire que sites.json le déclare.
+  if (existing && isRegistered(key, existing) && !replace) {
     logEvent({ ...base, result: "ok", detail: "déjà enregistré" });
     return { ok: true, alreadyRegistered: true, site: key, domain: existing.domain, policy: existing.policy, message: `« ${key} » est déjà enregistré : appelle sesame_login.` };
   }
@@ -594,7 +617,27 @@ export async function requestSite({ site: siteName, url, reason = "", note, call
   // pour le même site tant qu'une demande est « attente ». Sinon, boîtes de dialogue macOS, bloquantes
   // mais courtes (elles restent synchrones : rien à interroger après coup).
   if (!ui && barAlive()) {
-    return requestViaBar({ key, url, reason, note, caller, domain, extraDomains: validExtraDomains, base });
+    return requestViaBar({ key, url, reason, note, caller, domain, extraDomains: validExtraDomains, authProvider: provider, account: acct, base });
+  }
+
+  // Repli sans l'app (boîtes de dialogue macOS) : aucun mot de passe à saisir pour un site fournisseur.
+  if (provider) {
+    const confirmP = ui?.confirm || (o => askHuman({ okLabel: t("ok_register"), cancelLabel: t("cancel_later"), defaultOk: true, timeoutSec: 300, ...o }));
+    const go = await confirmP({ title: t("dlg_new_site_title"), message: t("dlg_new_provider_site_message", { caller, key, domain, provider: providerLabel(provider), reasonLine: reason ? `${t("reason_label")} : ${reason}\n\n` : "" }) });
+    if (!go) {
+      logEvent({ ...base, result: "refusé", detail: "l'utilisateur a refusé ou n'a pas répondu" });
+      return { ok: false, refused: true, message: "L'utilisateur n'a pas souhaité enregistrer ce site maintenant." };
+    }
+    sites[key] = {
+      domain: existing?.domain || domain, loginUrl: existing?.loginUrl || url, policy: existing?.policy || "ask",
+      authProvider: provider, ...(acct ? { account: acct } : existing?.account ? { account: existing.account } : {}),
+      extraDomains: validExtraDomains.length ? validExtraDomains : existing?.extraDomains,
+      note: note || existing?.note, selectors: existing?.selectors || {},
+      createdAt: existing?.createdAt || new Date().toISOString(), lastUsed: existing?.lastUsed,
+    };
+    saveSites(sites);
+    logEvent({ ...base, result: "ok", detail: `${domain}, via ${provider}${acct ? ` (compte ${acct})` : ""}, politique ${sites[key].policy}, aucun secret` });
+    return { ok: true, site: key, domain, policy: sites[key].policy, authProvider: provider, account: sites[key].account, message: `« ${key} » enregistré (connexion par ${provider}). Appelle maintenant sesame_login(site: "${key}").` };
   }
 
   const confirm = ui?.confirm || (o => askHuman({ okLabel: t("ok_register"), cancelLabel: t("cancel_later"), defaultOk: true, timeoutSec: 300, ...o }));
@@ -646,6 +689,13 @@ export async function requestSite({ site: siteName, url, reason = "", note, call
   return { ok: true, site: key, domain, policy: sites[key].policy, message: `« ${key} » enregistré par l'utilisateur. Appelle maintenant sesame_login(site: "${key}").` };
 }
 
+const providerLabel = p => ({ google: "Google", apple: "Apple", microsoft: "Microsoft", github: "GitHub" }[p] || p);
+
+/** Un site est « enregistré » s'il a un secret dans le Trousseau, ou s'il se connecte par un fournisseur d'identité (aucun secret à avoir). */
+export function isRegistered(key, site) {
+  return isProviderSite(site) || hasSecret(key);
+}
+
 const REQUEST_MAX_AGE_MS = 600000; // 10 min : au-delà, une demande est considérée périmée (app disparue, oubliée)
 
 /** Dossier des demandes déposées pour l'app Sésame (~/.sesame/requests). */
@@ -678,7 +728,7 @@ function findPendingRequest(dir, key) {
  * se suit avec sesame_request_status(requestId). Si une demande pour ce site est déjà « attente », aucune
  * seconde fenêtre : le requestId existant est renvoyé tel quel.
  */
-function requestViaBar({ key, url, reason, note, caller, domain, extraDomains, base }) {
+function requestViaBar({ key, url, reason, note, caller, domain, extraDomains, authProvider, account, base }) {
   const dir = requestsDir();
   const pending = findPendingRequest(dir, key);
   if (pending) {
@@ -687,7 +737,7 @@ function requestViaBar({ key, url, reason, note, caller, domain, extraDomains, b
   }
   const id = `${Date.now()}-${key}`;
   const file = path.join(dir, id + ".json");
-  fs.writeFileSync(file, JSON.stringify({ id, site: key, url, reason, note, caller, extraDomains, ts: new Date().toISOString() }), { mode: 0o600 });
+  fs.writeFileSync(file, JSON.stringify({ id, site: key, url, reason, note, caller, extraDomains, authProvider, account, ts: new Date().toISOString() }), { mode: 0o600 });
   logEvent({ ...base, result: "attente", detail: "formulaire ouvert dans l'app Sésame" });
   return { ok: true, status: "attente", requestId: id, message: "fenêtre ouverte sur le Mac ; interroge sesame_request_status" };
 }
@@ -714,9 +764,9 @@ export function requestStatus({ requestId, caller = "mcp" }) {
     try { fs.unlinkSync(done); } catch {}
     if (status === "saved") {
       const site = loadSites()[key];
-      if (site && hasSecret(key)) {
-        logEvent({ ...base, result: "ok", detail: `${site.domain}, politique ${site.policy}, saisi par l'utilisateur dans l'app Sésame` });
-        return { ok: true, status: "enregistré", site: key, domain: site.domain, policy: site.policy, message: `« ${key} » enregistré par l'utilisateur. Appelle maintenant sesame_login(site: "${key}").` };
+      if (site && isRegistered(key, site)) {
+        logEvent({ ...base, result: "ok", detail: `${site.domain}, politique ${site.policy}${isProviderSite(site) ? `, via ${site.authProvider}${site.account ? ` (compte ${site.account})` : ""}, aucun secret` : ""}, saisi par l'utilisateur dans l'app Sésame` });
+        return { ok: true, status: "enregistré", site: key, domain: site.domain, policy: site.policy, authProvider: site.authProvider || undefined, account: site.account || undefined, message: `« ${key} » enregistré par l'utilisateur. Appelle maintenant sesame_login(site: "${key}").` };
       }
       logEvent({ ...base, result: "échec", detail: "l'app a répondu « saved » mais le site ou le secret manque" });
       return { ok: false, status: "refusé", message: "L'enregistrement n'a pas abouti (secret absent). Réessaie." };

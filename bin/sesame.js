@@ -9,7 +9,7 @@ import readline from "node:readline";
 import { fileURLToPath } from "node:url";
 import {
   HOME, SITES_FILE, JOURNAL_FILE, CHROME_PROFILE, CDP_URL, POLICIES, KEYCHAIN_SERVICE,
-  loadSites, saveSites, normalizeName, siteDomainFor, assertLoginUrl, ensureHome, validateExtraDomain,
+  loadSites, saveSites, normalizeName, siteDomainFor, assertLoginUrl, ensureHome, validateExtraDomain, isProviderSite,
 } from "../src/config.js";
 import {
   setSecret, deleteSecret, hasSecret, trustedAppsByAccount, trustedHelperInfo, keychainAvailable,
@@ -201,12 +201,12 @@ function list() {
   if (isLocked()) console.log("🔒 VERROU GLOBAL ACTIF (sesame unlock)\n");
   if (keys.length === 0) return console.log("Aucun site. Ajoute-en un : sesame add edf --url https://…");
   const pad = (s, n) => String(s ?? "").padEnd(n);
-  console.log(pad("SITE", 16) + pad("DOMAINE", 32) + pad("POLITIQUE", 10) + pad("SECRET", 8) + "DERNIÈRE UTILISATION");
+  console.log(pad("SITE", 16) + pad("DOMAINE", 32) + pad("POLITIQUE", 10) + pad("SECRET", 12) + "DERNIÈRE UTILISATION");
   for (const k of keys) {
     const s = sites[k];
     const icon = { ask: "🟡 ask", always: "🟢 always", revoked: "🔴 revoked" }[s.policy] || s.policy;
-    const secret = keychainAvailable() ? (hasSecret(k) ? "oui" : "NON") : "?";
-    console.log(pad(k, 16) + pad(s.domain, 32) + pad(icon, 10) + pad(secret, 8) + (s.lastUsed ? s.lastUsed.replace("T", " ").slice(0, 16) : "jamais"));
+    const secret = isProviderSite(s) ? `via ${s.authProvider}` : keychainAvailable() ? (hasSecret(k) ? "oui" : "NON") : "?";
+    console.log(pad(k, 16) + pad(s.domain, 32) + pad(icon, 10) + pad(secret, 12) + (s.lastUsed ? s.lastUsed.replace("T", " ").slice(0, 16) : "jamais"));
   }
 }
 
@@ -321,7 +321,7 @@ function migrateKeychain() {
   if (!keychainAvailable()) throw new Error("Sésame stocke les secrets dans le Trousseau macOS : cette commande ne fonctionne que sur Mac.");
   const sites = loadSites();
   const only = opt("--site");
-  let keys = Object.keys(sites);
+  let keys = Object.keys(sites).filter(k => !isProviderSite(sites[k]));   // un site fournisseur n'a aucun secret à migrer
   if (only) {
     const key = normalizeName(only);
     if (!sites[key]) throw new Error(`Site inconnu : ${key}`);
@@ -611,20 +611,24 @@ async function doctor() {
     const helper = trustedHelperInfo();
     if (helper.present) ok(helper.signed, `assistant Trousseau : présent (${helper.path}), ${helper.signed ? "signé" : "NON SIGNÉ — ignoré, relance macos/scripts/make-app.sh"}`);
     else console.log("ℹ️  assistant Trousseau absent (macos/scripts/make-app.sh) : les lectures passent par /usr/bin/security, chaque site demande une confirmation à chaque connexion.");
-    for (const k of Object.keys(sites)) ok(hasSecret(k), `Trousseau : secret présent pour « ${k} »`);
-    if (n > 0 && helper.present && helper.signed && probeSecret(Object.keys(sites)[0]) !== null) {
+    const withSecret = Object.keys(sites).filter(k => !isProviderSite(sites[k]));
+    for (const k of Object.keys(sites)) {
+      if (isProviderSite(sites[k])) ok(true, `« ${k} » : connexion par ${sites[k].authProvider}${sites[k].account ? ` (compte ${sites[k].account})` : ""}, aucun secret attendu`);
+      else ok(hasSecret(k), `Trousseau : secret présent pour « ${k} »`);
+    }
+    if (withSecret.length > 0 && helper.present && helper.signed && probeSecret(withSecret[0]) !== null) {
       // Sonde de l'assistant (0.6.3+) : dit sans fenêtre si LUI, tel qu'il est signé, relit en silence.
-      for (const k of Object.keys(sites)) {
+      for (const k of withSecret) {
         const st = probeSecret(k);
         if (st === "silent") ok(true, `Trousseau : « ${k} » — lecture silencieuse (assistant)`);
         else if (st === "prompt") console.log(`⚠️  « ${k} » : lié à une autre signature de Sésame — le Trousseau demandera à chaque connexion → « Re-migrer… » dans le menu Sésame, ou : sesame migrate-keychain --site ${k}`);
         else if (st === "absent") ok(false, `Trousseau : « ${k} » absent`);
         else ok(false, `Trousseau : « ${k} » — sonde impossible`);
       }
-    } else if (n > 0 && !args.includes("--fast")) {
+    } else if (withSecret.length > 0 && !args.includes("--fast")) {
       process.stdout.write("   (lecture des droits d'accès du Trousseau, peut prendre une minute… --fast pour sauter)\n");
       const trusted = trustedAppsByAccount();
-      for (const k of Object.keys(sites)) {
+      for (const k of withSecret) {
         if (trusted[k] === "helper") ok(true, `Trousseau : « ${k} » — lecture silencieuse (assistant)`);
         else if (helper.present && helper.signed) console.log(`⚠️  « ${k} » : créé par l'ancien outil (ou une application externe) → lancez : sesame migrate-keychain --site ${k}`);
         else ok(true, `Trousseau : « ${k} » sans application de confiance (chaque lecture te sera demandée) — installe l'assistant (macos/scripts/make-app.sh) puis sesame migrate-keychain`);

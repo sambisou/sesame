@@ -2,13 +2,13 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { loadSites } from "./config.js";
+import { loadSites, AUTH_PROVIDERS, isProviderSite } from "./config.js";
 import { hasSecret, keychainAvailable } from "./keychain.js";
 import { readJournal, logEvent } from "./journal.js";
 import { isLocked } from "./policy.js";
 import { login, openLogin, waitCode, requestSite, requestStatus } from "./login.js";
 
-const UNKNOWN_HINT = "Ce site n'est pas dans Sésame. N'envoie pas l'utilisateur dans un terminal : appelle sesame_request_site(site, url, reason) — une fenêtre Sésame s'ouvre sur son Mac pour qu'il saisisse ses identifiants, puis rappelle sesame_login.";
+const UNKNOWN_HINT = "Ce site n'est pas dans Sésame. N'envoie pas l'utilisateur dans un terminal : appelle sesame_request_site(site, url, reason) — une fenêtre Sésame s'ouvre sur son Mac pour qu'il saisisse ses identifiants, puis rappelle sesame_login. Si le site se connecte par Google, Apple, Microsoft ou GitHub (« Se connecter avec Google »), passe authProvider (google|apple|microsoft|github) et, si tu le sais, account (l'adresse e-mail du compte à choisir chez le fournisseur) : aucun mot de passe n'est alors demandé ni rangé, Sésame clique le bouton du fournisseur.";
 /** Dernier filet : aucun message d'erreur ne doit jamais transporter une ligne de commande ou un JSON de secret. */
 export function scrub(msg) {
   let m = String(msg || "erreur inconnue").split("\n")[0];
@@ -37,13 +37,17 @@ export function buildServer(caller = CALLER) {
 
   server.tool(
     "sesame_list_sites",
-    "Liste les sites pour lesquels l'utilisateur a enregistré des identifiants dans Sésame (nom, domaine, politique d'accès, dernière utilisation). Ne révèle aucun secret. Appelle-le pour savoir quel nom de site utiliser avec sesame_login.",
+    "Liste les sites pour lesquels l'utilisateur a enregistré des identifiants dans Sésame (nom, domaine, politique d'accès, dernière utilisation). Un site connecté par un fournisseur d'identité porte authProvider (google|apple|microsoft|github) et account (compte à choisir) : il n'a aucun mot de passe, hasCredentials y vaut true et sesame_login clique le bouton du fournisseur. Ne révèle aucun secret. Appelle-le pour savoir quel nom de site utiliser avec sesame_login.",
     {},
     async () => {
       const sites = loadSites();
       const list = Object.entries(sites).map(([key, s]) => ({
         site: key, domain: s.domain, extraDomains: Array.isArray(s.extraDomains) && s.extraDomains.length ? s.extraDomains : undefined, loginUrl: s.loginUrl, policy: s.policy,
-        hasCredentials: keychainAvailable() ? hasSecret(key) : null, lastUsed: s.lastUsed || null, note: s.note || undefined,
+        authProvider: isProviderSite(s) ? s.authProvider : undefined, account: isProviderSite(s) && s.account ? s.account : undefined,
+        // Un site fournisseur n'a pas de secret : la connexion se fait par le bouton du fournisseur, donc « prêt » (viaProvider).
+        hasCredentials: isProviderSite(s) ? true : keychainAvailable() ? hasSecret(key) : null,
+        viaProvider: isProviderSite(s) ? s.authProvider : undefined,
+        lastUsed: s.lastUsed || null, note: s.note || undefined,
       }));
       return text({ locked: isLocked(), sites: list });
     }
@@ -51,7 +55,7 @@ export function buildServer(caller = CALLER) {
 
   server.tool(
     "sesame_login",
-    "Demande à Sésame de remplir (et par défaut soumettre) le formulaire de connexion d'un site dans l'onglet Chrome de l'utilisateur. Sésame lit les identifiants dans le Trousseau macOS et les tape lui-même : tu ne les vois jamais. Selon la politique du site, l'utilisateur devra valider une boîte de dialogue sur son Mac. Si le site demande ensuite un code (SMS, e-mail, application), Sésame prévient l'utilisateur, attend qu'il le saisisse lui-même dans Chrome, et ne rend la main qu'une fois le code accepté (ou le délai écoulé : alors appelle sesame_wait_code). Si le site se connecte par un fournisseur d'identité (« Sign in with Google »), Sésame clique ce bouton et laisse la session déjà ouverte dans son navigateur terminer ; il ne saisit JAMAIS d'identifiant chez le fournisseur — si celui-ci demande un compte, un mot de passe ou un code, la réponse le dit (needsProvider) et c'est à l'utilisateur de terminer une fois. Un mot de passe refusé répond désormais ok:false, jamais un succès assorti d'un indice. Si la connexion bascule vers un autre domaine enregistrable pour le mot de passe (fournisseur d'identité séparé), Sésame propose à l'utilisateur d'autoriser ce domaine (apprentissage assisté, jamais automatique) puis reprend seul — pas besoin de rappeler cet outil. Chaque demande est journalisée. Utilise le nom exact renvoyé par sesame_list_sites. Fournis un motif court et honnête (reason) : il est affiché à l'utilisateur.",
+    "Demande à Sésame de remplir (et par défaut soumettre) le formulaire de connexion d'un site dans l'onglet Chrome de l'utilisateur. Sésame lit les identifiants dans le Trousseau macOS et les tape lui-même : tu ne les vois jamais. Selon la politique du site, l'utilisateur devra valider une boîte de dialogue sur son Mac. Si le site demande ensuite un code (SMS, e-mail, application), Sésame prévient l'utilisateur, attend qu'il le saisisse lui-même dans Chrome, et ne rend la main qu'une fois le code accepté (ou le délai écoulé : alors appelle sesame_wait_code). Si le site se connecte par un fournisseur d'identité (« Sign in with Google » ; site déclaré avec authProvider, sans aucun secret), Sésame clique ce bouton, clique aussi (sans rien taper) la tuile du compte déclaré (account) si le fournisseur affiche un sélecteur de comptes, et laisse la session déjà ouverte dans son navigateur terminer ; il ne saisit JAMAIS d'identifiant chez le fournisseur — si celui-ci demande un compte, un mot de passe ou un code, la réponse le dit (needsProvider) et c'est à l'utilisateur de terminer une fois. Un mot de passe refusé répond désormais ok:false, jamais un succès assorti d'un indice. Si la connexion bascule vers un autre domaine enregistrable pour le mot de passe (fournisseur d'identité séparé), Sésame propose à l'utilisateur d'autoriser ce domaine (apprentissage assisté, jamais automatique) puis reprend seul — pas besoin de rappeler cet outil. Chaque demande est journalisée. Utilise le nom exact renvoyé par sesame_list_sites. Fournis un motif court et honnête (reason) : il est affiché à l'utilisateur.",
     {
       site: z.string().describe("Nom du site tel que listé par sesame_list_sites (ex. « edf »)"),
       reason: z.string().max(200).optional().describe("Pourquoi tu as besoin de te connecter (affiché à l'utilisateur)"),
@@ -78,8 +82,10 @@ export function buildServer(caller = CALLER) {
       note: z.string().max(120).optional().describe("Mémo utile, ex. « connexion en 2 étapes : e-mail, Continuer, mot de passe »"),
       extraDomains: z.array(z.string()).max(5).optional().describe("Domaines supplémentaires (autre domaine enregistrable) où la connexion peut basculer, ex. pour le mot de passe ou un fournisseur d'identité"),
       replace: z.boolean().optional().default(false).describe("true pour réenregistrer un site déjà connu (mot de passe changé, ou élément du Trousseau à recréer)"),
+      authProvider: z.enum(AUTH_PROVIDERS).optional().describe("À passer quand le site se connecte par « Se connecter avec Google / Apple / Microsoft / GitHub » : le formulaire ne demande alors aucun mot de passe, rien n'est rangé dans le Trousseau et sesame_login clique le bouton du fournisseur"),
+      account: z.string().max(120).optional().describe("Avec authProvider : l'adresse e-mail du compte à choisir chez le fournisseur quand plusieurs comptes sont ouverts (ex. sampwieder@gmail.com). Laisse vide si tu ne la connais pas : l'utilisateur la saisit."),
     },
-    async ({ site, url, reason, note, extraDomains, replace }) => text(await guarded(() => requestSite({ site, url, reason, note, extraDomains, replace, caller })))
+    async ({ site, url, reason, note, extraDomains, replace, authProvider, account }) => text(await guarded(() => requestSite({ site, url, reason, note, extraDomains, replace, authProvider, account, caller })))
   );
 
   server.tool(

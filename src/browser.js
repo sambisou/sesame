@@ -3,7 +3,7 @@
 import fs from "node:fs";
 import { spawn, execFileSync } from "node:child_process";
 import { chromium } from "playwright-core";
-import { CDP_URL, CHROME_PROFILE, siteMatchesUrl, hostnameOf, siteDomainFor, validateExtraDomain } from "./config.js";
+import { CDP_URL, CHROME_PROFILE, siteMatchesUrl, hostnameOf, siteDomainFor, validateExtraDomain, isProviderUrl, isProviderSite, normalizeAccount } from "./config.js";
 import { t } from "./i18n.js";
 
 // Champs de recherche et assimilés : jamais un identifiant.
@@ -403,6 +403,109 @@ async function findProviderButton(page, site, which) {
     if (hit) return { hit, provider: name };
   }
   return null;
+}
+
+// --- Chez le fournisseur : choix du compte, par CLIC seulement ---------------------------------------------
+// Les pages de compte du fournisseur déclaré (PROVIDER_HOSTS, src/config.js) sont implicitement permises pour
+// CLIQUER, sans extraDomains. Rien n'y est jamais tapé : ni fill, ni type, ni touche. Un écran de consentement
+// n'est pas cliqué non plus : c'est à l'utilisateur de le donner une fois.
+const EMAIL_SRC = "[a-z0-9][a-z0-9._%+-]*@[a-z0-9.-]+\\.[a-z]{2,}";
+const CONSENT_TEXT_RE = /souhaite acc[ée]der|veut acc[ée]der|wants to access|would like to access|permissions? requested|autorisations? demand[ée]es?|will be able to|pourra\s|partager (vos|votre)|share your|authorize\s|autoriser\s.*acc[ée]der|allow .* to access/i;
+const CONSENT_BTN_RE = /^(continuer|continue|autoriser|allow|accepter|accept|authorize|j'accepte|i agree|accept all)$/i;
+
+/**
+ * Tuiles de comptes de la page courante (sélecteur de comptes Google : `[data-identifier]` / `li[data-email]` ;
+ * Microsoft : tuile `[data-test-id=e-mail]`) ou, à défaut, tout élément cliquable qui montre UNE adresse e-mail.
+ * Chaque tuile reçoit un repère `data-sesame-tile` pour être cliquée ensuite. Renvoie [{ idx, email }] (minuscules).
+ */
+async function listAccountTiles(page) {
+  return page.evaluate(({ EMAIL }) => {
+    const visible = e => { const r = e.getBoundingClientRect(); const st = getComputedStyle(e); return r.width > 0 && r.height > 0 && st.visibility !== "hidden" && st.display !== "none"; };
+    document.querySelectorAll("[data-sesame-tile]").forEach(e => e.removeAttribute("data-sesame-tile"));
+    const out = [], seen = new Set();
+    const els = document.querySelectorAll('[data-identifier], [data-email], [data-test-id], li, a, button, [role="button"], [role="link"], [role="option"], [role="listitem"]');
+    for (const e of els) {
+      if (!visible(e)) continue;
+      const attr = e.getAttribute("data-identifier") || e.getAttribute("data-email") || e.getAttribute("data-test-id") || "";
+      let email = attr.includes("@") ? attr : null;
+      if (!email) {
+        const found = ((e.innerText || e.textContent || "").match(new RegExp(EMAIL, "gi"))) || [];
+        if (new Set(found.map(x => x.toLowerCase())).size !== 1) continue;   // aucune adresse, ou un conteneur de plusieurs comptes
+        email = found[0];
+      }
+      email = email.trim().toLowerCase();
+      if (seen.has(email)) continue;
+      seen.add(email);
+      e.setAttribute("data-sesame-tile", String(out.length));
+      out.push({ idx: out.length, email });
+    }
+    return out;
+  }, { EMAIL: EMAIL_SRC }).catch(() => []);
+}
+
+/** La page demande-t-elle un consentement (accès de l'application au compte) ? Texte explicite, ou bouton « Continuer / Accepter ». */
+async function looksLikeConsent(page) {
+  const body = await page.evaluate(() => document.body?.innerText || "").catch(() => "");
+  if (CONSENT_TEXT_RE.test(body)) return true;
+  const labels = await page.locator('button, [role="button"], input[type="submit"]')
+    .evaluateAll(els => els.filter(e => !!(e.offsetWidth || e.offsetHeight)).map(e => (e.innerText || e.value || "").trim())).catch(() => []);
+  return labels.some(l => CONSENT_BTN_RE.test(l));
+}
+
+/**
+ * Après le clic du bouton fournisseur : tant que la page (ou la fenêtre qui s'est ouverte) est chez le fournisseur
+ * déclaré, clique la tuile du compte `account` s'il y a un sélecteur de comptes. Ne tape rien. Renvoie
+ *  - { stop: { reason } } : Sésame s'arrête (compte absent, plusieurs comptes sans `account`, consentement) ;
+ *  - { stop: null } : plus de choix à faire (revenu sur le site, fenêtre fermée, ou écran inconnu).
+ * `getCur()` rend la page du fournisseur courante (la fenêtre si une s'est ouverte, sinon l'onglet).
+ */
+async function chooseProviderAccount({ site, label, getCur, step }) {
+  const account = normalizeAccount(site.account);
+  let clicked = false;
+  for (let round = 0; round < 4; round++) {
+    const cur = getCur();
+    if (!cur || cur.isClosed() || !isProviderUrl(site.authProvider, cur.url())) return { stop: null };
+    const where = publicUrl(cur.url());
+    const tiles = await listAccountTiles(cur);
+    if (tiles.length) {
+      if (clicked) {
+        // Le sélecteur de comptes réapparaît après notre clic : le fournisseur refuse ou redemande, on n'insiste pas.
+        return { stop: { reason: `${label} montre encore le choix du compte après le clic sur ${account || "la tuile"} (${where}) : intervention de l'utilisateur nécessaire.` } };
+      }
+      let tile;
+      if (account) {
+        tile = tiles.find(x => x.email === account);
+        if (!tile) {
+          step(`sélecteur de comptes ${label} : ${tiles.length} compte(s) proposé(s), « ${account} » absent — aucun clic`);
+          return { stop: { reason: `compte ${account} introuvable parmi les ${tiles.length} proposé(s) par ${label} (${where}) : l'utilisateur doit s'y connecter une fois, ou corriger le champ Compte du site.` } };
+        }
+      } else if (tiles.length === 1) {
+        tile = tiles[0];
+      } else {
+        step(`sélecteur de comptes ${label} : ${tiles.length} comptes proposés et aucun compte déclaré pour « ${site.key} » — aucun clic`);
+        return { stop: { reason: `${label} propose ${tiles.length} comptes et aucun compte (e-mail) n'est déclaré pour « ${site.key} » : renseigne le champ Compte du site dans l'app Sésame.` } };
+      }
+      step(`sélecteur de comptes ${label} : ${tiles.length} compte(s) proposé(s), tuile « ${tile.email} » à cliquer`);
+      await cur.locator(`[data-sesame-tile="${tile.idx}"]`).first().click({ timeout: 5000 }).catch(() => {});
+      clicked = true;
+      step(`compte « ${tile.email} » choisi chez ${label} (clic)`);
+      // Laisser le fournisseur rendre la main : la page quitte son domaine (ou la fenêtre se ferme).
+      const until = Date.now() + 10000;
+      while (Date.now() < until) {
+        const c = getCur();
+        if (!c || c.isClosed() || !isProviderUrl(site.authProvider, c.url())) break;
+        await cur.waitForTimeout(400).catch(() => {});
+      }
+      await cur.waitForLoadState("domcontentloaded", { timeout: 5000 }).catch(() => {});
+      continue;
+    }
+    if (await looksLikeConsent(cur)) {
+      step(`écran de consentement ${label} (${where}) — non cliqué`);
+      return { stop: { reason: `consentement à donner une fois par Sam : ${label} demande d'autoriser « ${site.key} » (${where}). Sésame ne clique jamais un consentement ; une fois donné, la connexion suivante passera seule.` } };
+    }
+    return { stop: null };   // écran inconnu (mot de passe, code, vérification…) : traité comme « le fournisseur demande quelque chose »
+  }
+  return { stop: null };
 }
 
 /**
@@ -991,8 +1094,9 @@ export async function waitForSecondFactor(page, site, { timeoutSec = 180, messag
  * @param {boolean} [opts.waitSecondFactor=true]  attendre le code si le site en demande un
  * @param {number}  [opts.secondFactorTimeoutSec=180]
  * @param {(info:{kind:string,detail:string}) => void} [opts.onSecondFactor]  appelé quand un code est demandé (notification, journal)
+ * @param {(info:{detail:string}) => void} [opts.onStep]  appelé à chaque étape de la connexion par fournisseur (journal)
  */
-export async function fillLogin(page, site, secret, { submitForm = true, waitSecondFactor = true, secondFactorTimeoutSec = 180, onSecondFactor, autoCode } = {}) {
+export async function fillLogin(page, site, secret, { submitForm = true, waitSecondFactor = true, secondFactorTimeoutSec = 180, onSecondFactor, autoCode, onStep } = {}) {
   const steps = [];
   // Un bandeau de cookies qui recouvre la page fait rater les clics (champ, bouton) : on le refuse d'abord.
   const bandeau = await ecarterBandeauCookies(page).catch(() => null);
@@ -1021,7 +1125,7 @@ export async function fillLogin(page, site, secret, { submitForm = true, waitSec
   // Site déclaré « connexion par fournisseur d'identité » : on clique son bouton et on laisse la session
   // déjà ouverte dans ce navigateur terminer. Sésame ne tape RIEN chez le fournisseur : si celui-ci demande
   // un compte, un mot de passe ou un code, on s'arrête et on le dit.
-  if (site.authProvider) {
+  if (isProviderSite(site)) {
     const found = await findProviderButton(page, site, site.authProvider);
     if (!found) {
       if (await looksSignedIn(page, site)) {
@@ -1032,19 +1136,42 @@ export async function fillLogin(page, site, secret, { submitForm = true, waitSec
         reason: `« ${site.key} » se connecte par ${PROVIDERS[site.authProvider]?.label || site.authProvider}, mais le bouton n'est pas sur cette page. Ouvre-la toi-même, ou corrige le sélecteur (providerSel).` };
     }
     const label = PROVIDERS[found.provider]?.label || found.provider;
-    await found.hit.el.click({ timeout: 5000 }).catch(() => {});
-    steps.push(`« se connecter avec ${label} » cliqué`);
-    await page.waitForLoadState("networkidle", { timeout: 20000 }).catch(() => {});
-    await page.waitForTimeout(1500);
+    const step = msg => { steps.push(msg); onStep?.({ detail: msg }); };
+    // Le fournisseur s'ouvre parfois dans une fenêtre à part : on garde les pages apparues pendant le clic.
+    const opened = [];
+    const onPage = p => opened.push(p);
+    page.context().on("page", onPage);
+    try {
+      await found.hit.el.click({ timeout: 5000 }).catch(() => {});
+      step(`« se connecter avec ${label} » cliqué`);
+      await page.waitForLoadState("networkidle", { timeout: 20000 }).catch(() => {});
+      await page.waitForTimeout(1500);
+      const getCur = () => {
+        const w = opened.filter(p => !p.isClosed() && isProviderUrl(site.authProvider, p.url())).pop();
+        return w || page;
+      };
+      // Choix du compte chez le fournisseur : un clic sur la tuile du compte déclaré, jamais de saisie.
+      const choice = await chooseProviderAccount({ site, label, getCur, step });
+      if (choice.stop) {
+        const where = publicUrl(getCur().url());
+        return { ok: false, steps, url: where, needsProvider: found.provider, reason: choice.stop.reason };
+      }
+      // Revenu sur le site (la fenêtre du fournisseur, s'il y en avait une, s'est refermée) : on laisse la redirection finir.
+      const until = Date.now() + 10000;
+      while (Date.now() < until && !page.isClosed() && isProviderUrl(site.authProvider, page.url())) await page.waitForTimeout(400);
+      await page.waitForLoadState("networkidle", { timeout: 8000 }).catch(() => {});
+    } finally {
+      page.context().off("page", onPage);
+    }
     // Revenu sur le site et connecté : la session du fournisseur a suffi.
     if (siteMatchesUrl(site, page.url()) && !(await hasLoginFields(page, site))) {
-      steps.push(`connexion par ${label} acceptée`);
+      step(`connexion par ${label} acceptée`);
       return { ok: true, steps, url: publicUrl(page.url()), title: await page.title().catch(() => ""), viaProvider: found.provider };
     }
-    // Toujours chez le fournisseur : il demande quelque chose. On n'y touche pas.
-    const where = publicUrl(page.url());
-    return { ok: false, steps, url: where, needsProvider: found.provider,
-      reason: `${label} demande une intervention (choix du compte, mot de passe, code ou validation) sur ${where}. Sésame ne saisit jamais rien chez un fournisseur d'identité : ouvre cette page et termine la connexion, elle restera ouverte ensuite.` };
+    // Toujours chez le fournisseur (ou revenu sans être connecté) : il demande quelque chose. On n'y touche pas.
+    const here = publicUrl(page.url());
+    return { ok: false, steps, url: here, needsProvider: found.provider,
+      reason: `${label} demande une intervention (choix du compte, mot de passe, code ou validation) sur ${here}. Sésame ne saisit jamais rien chez un fournisseur d'identité : ouvre cette page et termine la connexion, elle restera ouverte ensuite.` };
   }
 
   let user = secret.username ? await locateUser(page, site) : null;

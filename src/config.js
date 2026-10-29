@@ -13,6 +13,33 @@ export const KEYCHAIN_SERVICE = process.env.SESAME_KEYCHAIN_SERVICE || "sesame";
 
 export const POLICIES = ["always", "ask", "revoked"];
 
+/** Fournisseurs d'identité gérés (« Se connecter avec Google »…). Un site qui en déclare un n'a PAS de secret dans le Trousseau. */
+export const AUTH_PROVIDERS = ["google", "apple", "microsoft", "github"];
+/**
+ * Hôtes (exacts ou sous-domaines) des pages de compte de chaque fournisseur : les seuls où Sésame CLIQUE un
+ * choix de compte, sans extraDomains. Il n'y tape jamais rien.
+ */
+export const PROVIDER_HOSTS = {
+  google: ["accounts.google.com"],
+  apple: ["appleid.apple.com", "idmsa.apple.com"],
+  microsoft: ["login.microsoftonline.com", "login.live.com"],
+  github: ["github.com"],
+};
+/** Ce site se connecte-t-il par un fournisseur d'identité (donc sans secret ni Trousseau) ? */
+export function isProviderSite(site) {
+  return !!site && AUTH_PROVIDERS.includes(site.authProvider);
+}
+/** L'URL est-elle une page de compte du fournisseur (hôte exact ou sous-domaine d'un hôte de PROVIDER_HOSTS) ? */
+export function isProviderUrl(provider, url) {
+  const h = hostnameOf(url);
+  return !!h && (PROVIDER_HOSTS[provider] || []).some(d => h === d || h.endsWith("." + d));
+}
+/** Adresse e-mail plausible (compte à choisir chez le fournisseur) ; normalisée en minuscules, ou null. */
+export function normalizeAccount(v) {
+  const a = String(v ?? "").trim().toLowerCase();
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(a) ? a : null;
+}
+
 export function ensureHome() {
   fs.mkdirSync(HOME, { recursive: true, mode: 0o700 });
 }

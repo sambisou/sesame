@@ -6,7 +6,11 @@ import assert from "node:assert/strict";
 
 process.env.SESAME_HOME = fs.mkdtempSync(path.join(os.tmpdir(), "sesame-http-"));
 const cfg = await import("../src/config.js");
-cfg.saveSites({ edf: { domain: "edf.fr", loginUrl: "https://particulier.edf.fr/", policy: "ask" } });
+cfg.saveSites({
+  edf: { domain: "edf.fr", loginUrl: "https://particulier.edf.fr/", policy: "ask" },
+  // Site fournisseur : aucune entrée Trousseau, et pourtant « prêt ».
+  indeed: { domain: "indeed.com", loginUrl: "https://employers.indeed.com/", policy: "always", authProvider: "google", account: "sam@example.com" },
+});
 
 const { serveHttp } = await import("../src/http.js");
 const srv = await serveHttp({ port: 0 });
@@ -25,7 +29,15 @@ await c1.connect(new StreamableHTTPClientTransport(new URL(srv.url), { requestIn
 const tools = (await c1.listTools()).tools.map(t => t.name).sort();
 assert.deepEqual(tools, ["sesame_journal", "sesame_list_sites", "sesame_login", "sesame_open_login", "sesame_request_site", "sesame_request_status", "sesame_wait_code"]);
 const sites = JSON.parse((await c1.callTool({ name: "sesame_list_sites", arguments: {} })).content[0].text);
-assert.equal(sites.sites[0].site, "edf");
+assert.equal(sites.sites.find(x => x.site === "edf").site, "edf");
+const indeed = sites.sites.find(x => x.site === "indeed");
+assert.equal(indeed.authProvider, "google");
+assert.equal(indeed.account, "sam@example.com");
+assert.equal(indeed.hasCredentials, true, "un site fournisseur est prêt sans secret");
+assert.equal(indeed.viaProvider, "google");
+const reqTool = (await c1.listTools()).tools.find(t => t.name === "sesame_request_site");
+assert.deepEqual(reqTool.inputSchema.properties.authProvider.enum, ["google", "apple", "microsoft", "github"]);
+assert.ok(reqTool.inputSchema.properties.account, "sesame_request_site doit accepter account");
 await c1.close();
 
 // Avec jeton dans l'URL (clients sans en-tête personnalisé, ex. connecteur ChatGPT derrière un tunnel).

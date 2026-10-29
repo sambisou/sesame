@@ -53,6 +53,10 @@ const DICT = {
   },
 
   dlg_new_site_title: { fr: "Sésame — nouveau site", en: "Sésame — new site" },
+  dlg_new_provider_site_message: {
+    fr: "Claude ({caller}) a besoin de se connecter à « {key} » ({domain}) avec votre compte {provider}.\n\n{reasonLine}Aucun mot de passe n'est enregistré : Sésame cliquera le bouton « {provider} » et la session déjà ouverte dans son Chrome fera le reste.\n\nEnregistrer ce site maintenant ?",
+    en: "Claude ({caller}) needs to sign in to “{key}” ({domain}) with your {provider} account.\n\n{reasonLine}No password is stored: Sésame will click the “{provider}” button and the session already open in its Chrome does the rest.\n\nRegister this site now?",
+  },
   dlg_new_site_message: {
     fr: "Claude ({caller}) a besoin de se connecter à « {key} » ({domain}).\n\n{reasonLine}Sésame va vous demander votre identifiant puis votre mot de passe pour ce site. Ils seront rangés dans le Trousseau macOS ; Claude ne les verra jamais.\n\nEnregistrer ce site maintenant ?",
     en: "Claude ({caller}) needs to sign in to “{key}” ({domain}).\n\n{reasonLine}Sésame will ask for your username, then your password, for this site. They'll be stored in the macOS Keychain — Claude will never see them.\n\nRegister this site now?",

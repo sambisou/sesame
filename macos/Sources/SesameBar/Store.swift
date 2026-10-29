@@ -10,6 +10,10 @@ struct Site: Identifiable, Equatable {
     var policy: String       // ask | always | revoked
     var note: String?
     var lastUsed: Date?
+    /// google | apple | microsoft | github : le site se connecte par ce fournisseur, sans mot de passe ni Trousseau.
+    var authProvider: String? = nil
+    /// E-mail du compte à choisir chez le fournisseur.
+    var account: String? = nil
 }
 
 /// Une lecture du Trousseau qui attend l'utilisateur (voir Store.pollKeychainWaiting).
@@ -219,7 +223,7 @@ final class Store {
         guard let helper = keychainHelperPath else { if !sitesToMigrate.isEmpty { sitesToMigrate = [] }; return }
         if checkingMigration { return }
         checkingMigration = true
-        let keys = sites.map { $0.id }
+        let keys = sites.filter { $0.authProvider == nil }.map { $0.id }   // un site fournisseur n'a aucun secret à migrer
         let svc = service
         DispatchQueue.global(qos: .utility).async { [weak self] in
             let need = Store.sitesNeedingMigration(keys, service: svc, helperPath: helper)
@@ -352,7 +356,9 @@ final class Store {
             guard let s = obj[key] as? [String: Any] else { return nil }
             let lu = (s["lastUsed"] as? String).flatMap { iso.date(from: $0) ?? iso2.date(from: $0) }
             return Site(id: key, domain: s["domain"] as? String ?? "", loginUrl: s["loginUrl"] as? String ?? "",
-                        policy: s["policy"] as? String ?? "ask", note: s["note"] as? String, lastUsed: lu)
+                        policy: s["policy"] as? String ?? "ask", note: s["note"] as? String, lastUsed: lu,
+                        authProvider: (s["authProvider"] as? String).flatMap { Store.providers.contains($0) ? $0 : nil },
+                        account: s["account"] as? String)
         }
         if next != sites { sites = next }
         return true
@@ -405,7 +411,9 @@ final class Store {
             if Date().timeIntervalSince(ts) > 600 { continue }
             shownRequests.insert(id)
             let r = SiteRequest(id: id, site: site, url: url, reason: o["reason"] as? String ?? "", note: o["note"] as? String,
-                                caller: o["caller"] as? String ?? "Claude", ts: ts, extraDomains: (o["extraDomains"] as? [String]) ?? [])
+                                caller: o["caller"] as? String ?? "Claude", ts: ts, extraDomains: (o["extraDomains"] as? [String]) ?? [],
+                                authProvider: (o["authProvider"] as? String).flatMap { Store.providers.contains($0) ? $0 : nil },
+                                account: o["account"] as? String)
             Task { @MainActor in Windows.shared.showRequest(r, store: self) }
         }
     }
@@ -534,29 +542,37 @@ final class Store {
     /// embarqué dans ce bundle est présent, c'est lui qui crée l'élément (voir keychainHelperPath /
     /// runHelper) : l'élément lui appartient et il pourra le relire sans invite. Sinon, repli sur
     /// `security -T ""` (aucune application de confiance : chaque lecture demande).
-    func addSite(name: String, url: String, username: String, password: String, note: String, extraDomains: [String] = []) -> String? {
+    func addSite(name: String, url: String, username: String, password: String, note: String, extraDomains: [String] = [],
+                 authProvider: String? = nil, account: String = "") -> String? {
         let key = Store.normalize(name)
+        let viaProvider = authProvider != nil
+        if let p = authProvider, !Store.providers.contains(p) { return t("err_internal") }
+        let acct = account.trimmingCharacters(in: .whitespaces).lowercased()
+        if viaProvider && !acct.isEmpty && !Store.looksLikeEmail(acct) { return t("err_account_invalid") }
         guard !key.isEmpty, key.count <= 64, key.range(of: #"^[a-z0-9._-]+$"#, options: .regularExpression) != nil else { return t("err_name_invalid") }
         guard let u = URL(string: url.trimmingCharacters(in: .whitespaces)), let host = u.host else { return t("err_url_invalid") }
         let local = ["127.0.0.1", "localhost"].contains(host)
         guard u.scheme == "https" || (local && u.scheme == "http") else { return t("err_https_required") }
-        guard !password.isEmpty else { return t("err_password_empty") }
+        guard viaProvider || !password.isEmpty else { return t("err_password_empty") }
         guard loadSites() else { return t("err_sites_unreadable") }
         let existing = raw[key] as? [String: Any]
         let domain = existing?["domain"] as? String ?? Store.siteDomain(for: host)
-        let payload: [String: String] = ["username": username.trimmingCharacters(in: .whitespaces), "password": password]
-        guard let pd = try? JSONSerialization.data(withJSONObject: payload) else { return t("err_internal") }
-        let writeStatus: Int32
-        if let helper = keychainHelperPath {
-            writeStatus = runHelper(helper, ["set", service, key], stdin: pd)
-        } else {
-            guard let ps = String(data: pd, encoding: .utf8) else { return t("err_internal") }
-            _ = security(["delete-generic-password", "-s", service, "-a", key])
-            writeStatus = security(["add-generic-password", "-s", service, "-a", key, "-l", "Sésame — \(key)", "-D", "Identifiants Sésame (Claude)", "-T", "", "-w", ps]).status
-        }
-        guard writeStatus == 0 else {
-            log(site: key, action: "add_site", result: "échec", detail: "écriture Trousseau (code \(writeStatus))")
-            return t("err_keychain_write_refused", "\(writeStatus)")
+        // Site connecté par un fournisseur d'identité : AUCUN secret, rien n'est écrit dans le Trousseau.
+        if !viaProvider {
+            let payload: [String: String] = ["username": username.trimmingCharacters(in: .whitespaces), "password": password]
+            guard let pd = try? JSONSerialization.data(withJSONObject: payload) else { return t("err_internal") }
+            let writeStatus: Int32
+            if let helper = keychainHelperPath {
+                writeStatus = runHelper(helper, ["set", service, key], stdin: pd)
+            } else {
+                guard let ps = String(data: pd, encoding: .utf8) else { return t("err_internal") }
+                _ = security(["delete-generic-password", "-s", service, "-a", key])
+                writeStatus = security(["add-generic-password", "-s", service, "-a", key, "-l", "Sésame — \(key)", "-D", "Identifiants Sésame (Claude)", "-T", "", "-w", ps]).status
+            }
+            guard writeStatus == 0 else {
+                log(site: key, action: "add_site", result: "échec", detail: "écriture Trousseau (code \(writeStatus))")
+                return t("err_keychain_write_refused", "\(writeStatus)")
+            }
         }
         // Le Trousseau a pris quelques centaines de ms : on repart du fichier tel qu'il est maintenant.
         guard loadSites() else { return t("err_saved_sites_unreadable") }
@@ -566,6 +582,13 @@ final class Store {
         s["loginUrl"] = s["loginUrl"] as? String ?? u.absoluteString
         s["policy"] = s["policy"] as? String ?? "ask"
         if !note.isEmpty { s["note"] = note }
+        // Mode de connexion : fournisseur (+ compte) ou mot de passe. Repasser en mot de passe efface le fournisseur.
+        if let p = authProvider {
+            s["authProvider"] = p
+            if acct.isEmpty { s.removeValue(forKey: "account") } else { s["account"] = acct }
+        } else {
+            s.removeValue(forKey: "authProvider"); s.removeValue(forKey: "account")
+        }
         if s["selectors"] == nil { s["selectors"] = [String: String]() }
         if s["createdAt"] == nil { s["createdAt"] = iso.string(from: Date()) }
         // Domaines supplémentaires (voir validateExtraDomain, src/config.js) : un champ non vide remplace
@@ -577,10 +600,36 @@ final class Store {
         }
         raw[key] = s
         do { try saveSites() } catch { return t("err_saved_sites_write_failed", error.localizedDescription) }
-        log(site: key, action: existing == nil ? "add_site" : "update_site", result: "ok", detail: "\(s["domain"] ?? domain), politique \(s["policy"] ?? "ask"), saisi dans l'app Sésame")
+        log(site: key, action: existing == nil ? "add_site" : "update_site", result: "ok", detail: "\(s["domain"] ?? domain), politique \(s["policy"] ?? "ask"), \(viaProvider ? "via \(authProvider ?? "")\(acct.isEmpty ? "" : " (compte \(acct))"), aucun secret" : "mot de passe"), saisi dans l'app Sésame")
         loadSites()
         lastError = nil
         return nil
+    }
+
+    /// Fournisseurs d'identité gérés (mêmes valeurs que AUTH_PROVIDERS, src/config.js).
+    static let providers = ["google", "apple", "microsoft", "github"]
+
+    static func looksLikeEmail(_ s: String) -> Bool {
+        s.range(of: #"^[^\s@]+@[^\s@]+\.[^\s@]+$"#, options: .regularExpression) != nil
+    }
+
+    /// Modifie fournisseur et compte d'un site déjà enregistré (fiche du panneau). N'écrit que dans sites.json :
+    /// un site fournisseur n'a rien dans le Trousseau.
+    func setProvider(_ key: String, provider: String, account: String) {
+        guard Store.providers.contains(provider) else { return }
+        let acct = account.trimmingCharacters(in: .whitespaces).lowercased()
+        if !acct.isEmpty && !Store.looksLikeEmail(acct) { lastError = t("err_account_invalid"); return }
+        guard loadSites() else { lastError = t("err_sites_unreadable"); return }
+        guard var s = raw[key] as? [String: Any] else { return }
+        s["authProvider"] = provider
+        if acct.isEmpty { s.removeValue(forKey: "account") } else { s["account"] = acct }
+        raw[key] = s
+        do {
+            try saveSites()
+            log(site: key, action: "update_site", result: "ok", detail: "via \(provider)\(acct.isEmpty ? "" : " (compte \(acct))"), modifié dans l'app Sésame")
+            lastError = nil
+        } catch { lastError = t("err_sites_write_failed", error.localizedDescription) }
+        loadSites()
     }
 
     func openChrome() {

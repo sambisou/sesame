@@ -3,6 +3,8 @@ import AppKit
 
 /// Le formulaire d'identifiants de Sésame : identifiant et mot de passe sur la même fenêtre,
 /// œil pour afficher le mot de passe. Le mot de passe va au Trousseau, jamais ailleurs.
+/// Pour un site qui se connecte par Google, Apple, Microsoft ou GitHub : sélecteur « Connexion », aucun mot de
+/// passe, seulement l'e-mail du compte à choisir chez le fournisseur ; rien n'est écrit dans le Trousseau.
 struct CredentialForm: View {
     let store: Store
     /// Demande venue de Claude (site et URL imposés) ; nil quand l'utilisateur ajoute un site lui-même.
@@ -13,6 +15,9 @@ struct CredentialForm: View {
     @State private var url: String
     @State private var username = ""
     @State private var password = ""
+    /// "password" ou un fournisseur (google | apple | microsoft | github).
+    @State private var mode: String
+    @State private var account: String
     @State private var note: String
     @State private var extraDomainsText: String
     @State private var reveal = false
@@ -25,7 +30,11 @@ struct CredentialForm: View {
         _url = State(initialValue: request?.url ?? "")
         _note = State(initialValue: request?.note ?? "")
         _extraDomainsText = State(initialValue: (request?.extraDomains ?? []).joined(separator: ", "))
+        _mode = State(initialValue: request?.authProvider ?? "password")
+        _account = State(initialValue: request?.account ?? "")
     }
+
+    private var viaProvider: Bool { mode != "password" }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -51,34 +60,48 @@ struct CredentialForm: View {
                 } else {
                     row(t("label_login_page")) { Text(url).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle).frame(maxWidth: .infinity, alignment: .leading) }
                 }
-                row(t("label_username")) { TextField("", text: $username, prompt: Text(t("placeholder_username"))).textFieldStyle(.roundedBorder) }
-                row(t("label_password")) {
-                    HStack(spacing: 6) {
-                        Group {
-                            if reveal { TextField("", text: $password).textFieldStyle(.roundedBorder) }
-                            else { SecureField("", text: $password).textFieldStyle(.roundedBorder) }
+                row(t("label_sign_in")) {
+                    Picker("", selection: $mode) {
+                        Text(t("mode_password")).tag("password")
+                        Text("Google").tag("google")
+                        Text("Apple").tag("apple")
+                        Text("Microsoft").tag("microsoft")
+                        Text("GitHub").tag("github")
+                    }
+                    .labelsHidden().pickerStyle(.menu).frame(maxWidth: .infinity, alignment: .leading)
+                }
+                if viaProvider {
+                    row(t("label_account")) { TextField("", text: $account, prompt: Text(t("placeholder_account"))).textFieldStyle(.roundedBorder) }
+                } else {
+                    row(t("label_username")) { TextField("", text: $username, prompt: Text(t("placeholder_username"))).textFieldStyle(.roundedBorder) }
+                    row(t("label_password")) {
+                        HStack(spacing: 6) {
+                            Group {
+                                if reveal { TextField("", text: $password).textFieldStyle(.roundedBorder) }
+                                else { SecureField("", text: $password).textFieldStyle(.roundedBorder) }
+                            }
+                            Button { reveal.toggle() } label: {
+                                Image(systemName: reveal ? "eye.slash" : "eye").font(.system(size: 13))
+                            }
+                            .buttonStyle(.plain).foregroundStyle(.secondary).help(reveal ? t("eye_hide") : t("eye_show"))
                         }
-                        Button { reveal.toggle() } label: {
-                            Image(systemName: reveal ? "eye.slash" : "eye").font(.system(size: 13))
-                        }
-                        .buttonStyle(.plain).foregroundStyle(.secondary).help(reveal ? t("eye_hide") : t("eye_show"))
                     }
                 }
                 row(t("label_note")) { TextField("", text: $note, prompt: Text(t("placeholder_note"))).textFieldStyle(.roundedBorder) }
                 row(t("label_extra_domains")) { TextField("", text: $extraDomainsText, prompt: Text(t("placeholder_extra_domains"))).textFieldStyle(.roundedBorder) }
             }
-            Text(t("extra_domains_help"))
+            Text(viaProvider ? t("provider_help") : t("extra_domains_help"))
                 .font(.system(size: 10)).foregroundStyle(.secondary)
 
             if let e = error { Text(e).font(.system(size: 11)).foregroundStyle(Color(red: 0.7, green: 0.23, blue: 0.18)) }
 
             HStack {
-                Text(t("keychain_footer"))
+                Text(viaProvider ? t("provider_footer") : t("keychain_footer"))
                     .font(.system(size: 10)).foregroundStyle(.secondary)
                 Spacer()
                 Button(request == nil ? t("cancel") : t("later")) { onDone(false) }.keyboardShortcut(.cancelAction)
                 Button(t("save")) { save() }.keyboardShortcut(.defaultAction).buttonStyle(.borderedProminent)
-                    .disabled(busy || name.isEmpty || url.isEmpty || password.isEmpty)
+                    .disabled(busy || name.isEmpty || url.isEmpty || (!viaProvider && password.isEmpty))
             }
         }
         .padding(18)
@@ -95,7 +118,8 @@ struct CredentialForm: View {
     private func save() {
         busy = true
         let extras = extraDomainsText.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
-        if let e = store.addSite(name: name, url: url, username: username, password: password, note: note, extraDomains: extras) {
+        if let e = store.addSite(name: name, url: url, username: username, password: password, note: note, extraDomains: extras,
+                                 authProvider: viaProvider ? mode : nil, account: account) {
             error = e; busy = false
         } else {
             password = ""

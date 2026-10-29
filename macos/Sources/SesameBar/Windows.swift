@@ -13,6 +13,10 @@ struct SiteRequest: Identifiable, Equatable {
     /// Domaines supplémentaires proposés par Claude (fournisseur d'identité sur un autre domaine
     /// enregistrable) : pré-remplit le champ correspondant du formulaire, modifiable par l'utilisateur.
     var extraDomains: [String] = []
+    /// Connexion par fournisseur d'identité demandée par Claude (google | apple | microsoft | github) : le formulaire
+    /// s'ouvre en mode fournisseur (aucun mot de passe). `account` : l'e-mail du compte à choisir chez lui, si Claude le sait.
+    var authProvider: String? = nil
+    var account: String? = nil
 }
 
 /// Fenêtres ordinaires (pas le menu) : le formulaire d'identifiants, pour une demande de Claude ou un ajout manuel.

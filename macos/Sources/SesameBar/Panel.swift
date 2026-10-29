@@ -14,6 +14,10 @@ struct Panel: View {
     @Bindable var store: Store
     @State private var confirmRemove: Site?
     @State private var claudeFixing = false
+    /// Fiche en cours de modification (fournisseur et compte d'un site connecté par un fournisseur d'identité).
+    @State private var editingProvider: String?
+    @State private var editProvider = "google"
+    @State private var editAccount = ""
 
     var body: some View {
         VStack(spacing: 0) {
@@ -57,7 +61,7 @@ struct Panel: View {
     private var listHeight: CGFloat {
         let showDiag = store.claudeStatusChecked && store.claudeStatus.anyInstalled && !store.claudeStatus.connected
         var rows: CGFloat = 40 + 70
-        rows += CGFloat(store.sites.count) * 58
+        rows += CGFloat(store.sites.count) * 58 + CGFloat(store.sites.filter { $0.authProvider != nil }.count) * 20
         rows += confirmRemove == nil ? 0 : 34
         rows += CGFloat(min(visibleEvents.count, 8)) * 24
         rows += store.extensionStatus.level == 3 ? 56 : 84
@@ -199,9 +203,42 @@ struct Panel: View {
                     Image(systemName: "info.circle").font(.system(size: 11)).foregroundStyle(Palette.muted).help(n)
                 }
             }
+            if let p = s.authProvider {
+                providerLine(s, provider: p)
+            }
         }
         .padding(.horizontal, 14).padding(.vertical, 7)
         .background(Color.primary.opacity(0.001))
+    }
+
+    private func providerName(_ p: String) -> String {
+        switch p { case "google": return "Google"; case "apple": return "Apple"; case "microsoft": return "Microsoft"; case "github": return "GitHub"; default: return p }
+    }
+
+    /// « via Google · compte » et, au crayon, modification du fournisseur et du compte (sites.json seulement : aucun secret).
+    @ViewBuilder
+    private func providerLine(_ s: Site, provider p: String) -> some View {
+        if editingProvider == s.id {
+            HStack(spacing: 6) {
+                Picker("", selection: $editProvider) {
+                    ForEach(Store.providers, id: \.self) { Text(providerName($0)).tag($0) }
+                }
+                .labelsHidden().pickerStyle(.menu).controlSize(.small).frame(width: 110)
+                TextField("", text: $editAccount, prompt: Text(t("placeholder_account"))).textFieldStyle(.roundedBorder).controlSize(.small)
+                Button(t("cancel")) { editingProvider = nil }.controlSize(.mini)
+                Button(t("save")) { store.setProvider(s.id, provider: editProvider, account: editAccount); editingProvider = nil }
+                    .controlSize(.mini).buttonStyle(.borderedProminent)
+            }
+        } else {
+            HStack(spacing: 6) {
+                Image(systemName: "person.crop.circle.badge.checkmark").font(.system(size: 10)).foregroundStyle(Palette.muted)
+                Text(s.account.map { t("site_via_account", providerName(p), $0) } ?? t("site_via_no_account", providerName(p)))
+                    .font(.system(size: 11)).foregroundStyle(Palette.muted).lineLimit(1).truncationMode(.middle)
+                Spacer()
+                Button { editProvider = p; editAccount = s.account ?? ""; editingProvider = s.id } label: { Image(systemName: "pencil").font(.system(size: 10)) }
+                    .buttonStyle(.plain).foregroundStyle(Palette.muted).help(t("site_edit_provider_help"))
+            }
+        }
     }
 
     private func policyColor(_ p: String) -> Color {

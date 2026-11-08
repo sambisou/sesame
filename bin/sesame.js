@@ -63,6 +63,11 @@ Usage : sesame <commande> [options]
                           fenêtre « Autoriser » par site) puis le réécrit via l'assistant Sésame, pour que la
                           prochaine lecture soit silencieuse. Sans --site : tous les sites à migrer.
   lock | unlock           Verrou global : bloque toute connexion, quel que soit le site.
+  state [<site>]          État connu des sessions (vivante, morte, bloquée), dernière sonde, dernier
+                          résultat, verrou d'essais et essais du jour. Jamais de secret.
+  unlock-site <site>      Lève le verrou d'essais d'un site (posé après un captcha ou un mot de passe
+                          refusé : Sésame n'insistait plus avant le lendemain 09:30) et oublie les
+                          échecs du jour.
   log [--site <site>] [-n <N>]
                           Affiche le journal d'accès (défaut : 30 dernières lignes).
   chrome                  Lance le Chrome « Sésame » (profil dédié, port DevTools ${CDP_URL.split(":").pop()}).
@@ -96,6 +101,8 @@ async function main() {
     case "lock": lock(); logEvent({ action: "lock", caller: "cli", result: "ok" }); return console.log("🔒 Sésame verrouillé. Aucune connexion ne sera remplie jusqu'à `sesame unlock`.");
     case "unlock": unlock(); logEvent({ action: "unlock", caller: "cli", result: "ok" }); return console.log("🔓 Sésame déverrouillé.");
     case "log": case "journal": return log();
+    case "state": case "etat": case "état": return state(args[0]);
+    case "unlock-site": return unlockSiteCmd(args[0]);
     case "chrome": return chrome();
     case "install": return install(args[0] || "all");
     case "serve": return serve();
@@ -370,6 +377,64 @@ function migrateKeychain() {
   const ok = results.filter(Boolean).length;
   console.log(`\nBilan : ${ok}/${results.length} site(s) migré(s).`);
   if (ok < results.length) console.log("Relance « sesame migrate-keychain » pour réessayer les échecs (ou --site <nom> pour un seul).");
+}
+
+/**
+ * `sesame state [site]` : l'état des sessions tel que Sésame le connaît (src/state.js) — jamais de secret.
+ * Par site : état (alive = session vivante, dead = à reconnecter, unknown = jamais sondé ou indéterminé,
+ * blocked = verrou d'essais), depuis quand, dernière sonde, dernière connexion et son code de résultat,
+ * essais bloquants du jour / plafond, verrou jusqu'à (et sa cause).
+ */
+async function state(name) {
+  const { siteState, checkLock, attemptsPerDay, attemptsToday, formatLocal, STATE_FILE } = await import("../src/state.js");
+  const { codeLabel } = await import("../src/outcomes.js");
+  const sites = loadSites();
+  const keys = name ? [normalizeName(name)] : Object.keys(sites).sort();
+  if (name && !sites[keys[0]]) throw new Error(`Site inconnu : ${keys[0]}`);
+  if (keys.length === 0) return console.log("Aucun site.");
+  if (isLocked()) console.log("🔒 VERROU GLOBAL ACTIF (sesame unlock)\n");
+  const when = iso => (iso ? formatLocal(iso) : "jamais");
+  const pad = (s, n) => String(s ?? "").padEnd(n);
+  if (!name) console.log(pad("SITE", 16) + pad("SESSION", 10) + pad("DEPUIS", 13) + pad("SONDE", 13) + pad("CONNEXION", 13) + pad("DERNIER RÉSULTAT", 30) + "ESSAIS / VERROU");
+  for (const k of keys) {
+    const site = { key: k, ...sites[k] };
+    const s = siteState(k);
+    const lk = checkLock(site);
+    const icon = { alive: "🟢 alive", dead: "🔴 dead", blocked: "⛔ blocked", unknown: "⚪ unknown" }[s.state] || s.state;
+    const essais = `${attemptsToday(k, s.failures)}/${attemptsPerDay(site)}`;
+    const verrou = lk.locked ? `verrou jusqu'au ${formatLocal(lk.until)} (${codeLabel(lk.reason)})` : "—";
+    if (name) {
+      console.log(`${k} (${site.domain})`);
+      console.log(`  session          : ${icon}${s.since ? ` depuis le ${when(s.since)}` : ""}`);
+      console.log(`  dernière sonde   : ${when(s.lastProbe)}`);
+      console.log(`  dernière connexion : ${when(s.lastLogin)}${s.lastCode ? ` — ${s.lastCode} (${codeLabel(s.lastCode)})` : ""}`);
+      if (s.lastUrl) console.log(`  dernière page    : ${s.lastUrl}`);
+      console.log(`  essais bloquants : ${essais} aujourd'hui (plafond ${attemptsPerDay(site)}/jour${site.limits?.attemptsPerDay ? ", réglé pour ce site" : ""})`);
+      console.log(`  verrou d'essais  : ${lk.locked ? `jusqu'au ${formatLocal(lk.until)} — cause : ${lk.reason} (${codeLabel(lk.reason)}) → sesame unlock-site ${k}` : "aucun"}`);
+      if (s.failures.length) {
+        console.log(`  derniers échecs  :`);
+        for (const f of s.failures.slice(-10)) console.log(`    ${when(f.ts)}  ${f.code} (${codeLabel(f.code)})`);
+      }
+    } else {
+      console.log(pad(k, 16) + pad(icon, 10) + pad(when(s.since), 13) + pad(when(s.lastProbe), 13) + pad(when(s.lastLogin), 13) + pad(s.lastCode ? `${s.lastCode}` : "—", 30) + `${essais}  ${verrou}`);
+    }
+  }
+  console.log(`\n(${STATE_FILE})`);
+}
+
+/** `sesame unlock-site <site>` : lève le verrou d'essais (src/state.js) et oublie les échecs du jour. */
+async function unlockSiteCmd(name) {
+  if (!name) throw new Error("Usage : sesame unlock-site <site>");
+  const key = normalizeName(name);
+  const sites = loadSites();
+  if (!sites[key]) throw new Error(`Site inconnu : ${key}`);
+  const { checkLock, unlockSite, formatLocal } = await import("../src/state.js");
+  const before = checkLock({ key, ...sites[key] });
+  unlockSite(key);
+  logEvent({ site: key, action: "unlock_site", caller: "cli", result: "ok", detail: before.locked ? `verrou levé (était posé jusqu'au ${formatLocal(before.until)}, cause ${before.reason})` : "aucun verrou posé, échecs du jour oubliés" });
+  console.log(before.locked
+    ? `🔓 « ${key} » : verrou d'essais levé (il courait jusqu'au ${formatLocal(before.until)}, cause « ${before.reason} »). Un essai est de nouveau possible.`
+    : `ℹ️  « ${key} » : aucun verrou d'essais n'était posé ; les échecs du jour sont oubliés.`);
 }
 
 function log() {

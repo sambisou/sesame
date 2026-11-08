@@ -6,6 +6,11 @@ site/dist/
 
 # Documents internes (comptes, choix d'hébergement) — jamais publiés
 site/propositions-domaine.html
+# Dossier de session du 08/11/2026 (recherche sur les comptes de l'hôtel, réglages de sonde par site avec
+# identifiants de compte) : vit dans la mémoire de Sam, jamais dans ce dépôt public
+recherche/
+plan-connexions-sesame-*.md
+docs/sites-session-propositions.json
 
 # Aucune donnée locale de Sésame ne vit dans le dépôt (elles sont dans ~/.sesame), mais par sécurité :
 sites.json

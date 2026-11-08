@@ -204,7 +204,7 @@ try {
     assert.equal(st.authProvider, "github");
     assert.equal(kc.hasSecret("nouveau"), false);
     console.log("  9 requestSite / requestStatus : un site fournisseur est enregistré sans secret, fournisseur/compte validés");
-    stopLaunchedChrome();
+    await stopLaunchedChrome();
   }
 } catch (e) { failed = e; } finally {
   await b.close().catch(() => {});

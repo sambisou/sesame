@@ -1,10 +1,12 @@
 // Connexion à Chrome (protocole DevTools) et remplissage des champs.
 // Chrome doit tourner avec --remote-debugging-port (voir `sesame chrome`).
 import fs from "node:fs";
-import { spawn, execFileSync } from "node:child_process";
+import path from "node:path";
+import { spawn, execFileSync, execSync } from "node:child_process";
 import { chromium } from "playwright-core";
 import { CDP_URL, CHROME_PROFILE, siteMatchesUrl, hostnameOf, siteDomainFor, validateExtraDomain, isProviderUrl, isProviderSite, normalizeAccount } from "./config.js";
 import { t } from "./i18n.js";
+import { withOutcome } from "./outcomes.js";
 
 // Champs de recherche et assimilés : jamais un identifiant.
 const NOT_SEARCH = ':not([type="search"]):not([role="searchbox"]):not([name*="search" i]):not([id*="search" i]):not([name*="recherche" i]):not([id*="recherche" i]):not([name="q"]):not([placeholder*="recherch" i]):not([placeholder*="search" i])';
@@ -122,10 +124,101 @@ export async function launchChrome(opts = {}) {
   return launching;
 }
 
-async function launchChromeOnce({ waitMs = 15000 } = {}) {
+/** PID des processus Chrome lancés sur un profil (le profil Sésame par défaut), jamais le Chrome habituel de l'utilisateur. */
+function chromePidsOnProfile(profile = CHROME_PROFILE) {
+  try {
+    return execFileSync("/usr/bin/pgrep", ["-f", "--", `--user-data-dir=${profile}`], { encoding: "utf8" })
+      .trim().split("\n").filter(Boolean).map(Number).filter(n => Number.isInteger(n) && n !== process.pid);
+  } catch { return []; }
+}
+
+/**
+ * Un Chrome tourne-t-il déjà sur ce profil ? Vérité : `pgrep -f -- --user-data-dir=<profil>`. Pour les bancs
+ * d'essai, injectable : SESAME_PROFILE_BUSY=1 (occupé) ou SESAME_PROFILE_BUSY_CMD=<commande shell> (code de
+ * retour 0 = occupé), sans avoir à lancer un vrai Chrome.
+ */
+export function chromeProfileBusy(profile = CHROME_PROFILE) {
+  if (process.env.SESAME_PROFILE_BUSY === "1") return true;
+  if (process.env.SESAME_PROFILE_BUSY === "0") return false;
+  if (process.env.SESAME_PROFILE_BUSY_CMD) {
+    try { execSync(process.env.SESAME_PROFILE_BUSY_CMD, { stdio: "ignore", timeout: 5000, env: { ...process.env, SESAME_PROFILE: profile } }); return true; }
+    catch { return false; }
+  }
+  return chromePidsOnProfile(profile).length > 0;
+}
+
+/** Écriture atomique d'un fichier du profil (.tmp puis rename), mode 0600. */
+function writeAtomic(file, content) {
+  const tmp = `${file}.sesame-tmp`;
+  fs.writeFileSync(tmp, content, { mode: 0o600 });
+  fs.renameSync(tmp, file);
+}
+
+/**
+ * Prépare le profil Chrome Sésame AVANT de le lancer, et seulement si aucun Chrome ne tourne dessus :
+ *  - retire les verrous `SingletonLock`, `SingletonSocket`, `SingletonCookie` laissés par un arrêt brutal
+ *    (sinon Chrome refuse de s'ouvrir ou ouvre un profil vierge) ;
+ *  - pose dans `Default/Preferences` : session.restore_on_startup = 1 (reprendre les onglets, donc les
+ *    sessions), profile.exit_type = "Normal" et profile.exited_cleanly = true (plus de bandeau « Chrome ne
+ *    s'est pas fermé correctement »), credentials_enable_service = false et
+ *    profile.password_manager_enabled = false (Chrome ne propose jamais d'enregistrer les mots de passe que
+ *    Sésame tape). Sans Preferences (premier lancement) : Default/ et un Preferences minimal sont créés.
+ * Mêmes clés sur macOS et Linux (atelier). Aucune erreur ne remonte : elle est rapportée par `onEvent`.
+ * Renvoie { done, skipped?, reason?, removed: [...], prefs: "créé"|"modifié"|"inchangé"|null }.
+ */
+export function prepareChromeProfile({ profile = CHROME_PROFILE, onEvent = () => {}, busy } = {}) {
+  const report = { done: false, removed: [], prefs: null };
+  try {
+    const occupied = typeof busy === "boolean" ? busy : typeof busy === "function" ? !!busy(profile) : chromeProfileBusy(profile);
+    if (occupied) {
+      report.skipped = true; report.reason = "un Chrome tourne déjà sur ce profil : rien touché";
+      onEvent({ result: "étape", detail: `profil Chrome non préparé (${report.reason})` });
+      return report;
+    }
+    fs.mkdirSync(profile, { recursive: true, mode: 0o700 });
+    for (const name of ["SingletonLock", "SingletonSocket", "SingletonCookie"]) {
+      const p = path.join(profile, name);
+      try {
+        fs.lstatSync(p);           // liens symboliques (SingletonLock pointe vers « hôte-pid ») : lstat, pas stat
+        fs.rmSync(p, { force: true });
+        report.removed.push(name);
+      } catch { /* absent */ }
+    }
+    const dir = path.join(profile, "Default");
+    const file = path.join(dir, "Preferences");
+    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    let prefs = {};
+    let existed = false;
+    if (fs.existsSync(file)) {
+      existed = true;
+      try { prefs = JSON.parse(fs.readFileSync(file, "utf8")); } catch (e) { onEvent({ result: "étape", detail: `Preferences illisible (${errCause(e)}) : réécrit` }); prefs = {}; }
+      if (!prefs || typeof prefs !== "object" || Array.isArray(prefs)) prefs = {};
+    }
+    const before = JSON.stringify(prefs);
+    prefs.session = { ...(prefs.session && typeof prefs.session === "object" ? prefs.session : {}), restore_on_startup: 1 };
+    prefs.profile = { ...(prefs.profile && typeof prefs.profile === "object" ? prefs.profile : {}), exit_type: "Normal", exited_cleanly: true, password_manager_enabled: false };
+    prefs.credentials_enable_service = false;
+    const after = JSON.stringify(prefs);
+    if (!existed) { writeAtomic(file, after); report.prefs = "créé"; }
+    else if (after !== before) { writeAtomic(file, after); report.prefs = "modifié"; }
+    else report.prefs = "inchangé";
+    report.done = true;
+    if (report.removed.length || report.prefs !== "inchangé") {
+      onEvent({ result: "étape", detail: `profil Chrome préparé : Preferences ${report.prefs}${report.removed.length ? `, ${report.removed.join(", ")} retiré(s)` : ""}` });
+    }
+  } catch (e) {
+    report.reason = errCause(e);
+    onEvent({ result: "étape", detail: `préparation du profil Chrome ignorée : ${report.reason}` });
+  }
+  return report;
+}
+
+async function launchChromeOnce({ waitMs = 15000, onEvent = () => {} } = {}) {
   const bin = process.env.SESAME_CHROME || "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
   if (!fs.existsSync(bin)) throw new Error("Google Chrome n'est pas dans /Applications : installe-le, ou lance le Chrome Sésame à la main.");
   const port = CDP_URL.split(":").pop();
+  // Profil qui reprend sa session et ne garde pas de verrou périmé — seulement si aucun Chrome n'y tourne.
+  prepareChromeProfile({ onEvent });
   // SESAME_CHROME_HEADLESS=1 : Chrome sans fenêtre. Réservé aux bancs d'essai — ils ne doivent pas faire
   // surgir de fenêtres sur l'écran de l'utilisateur pendant qu'ils tournent.
   const headless = process.env.SESAME_CHROME_HEADLESS === "1" ? ["--headless=new"] : [];
@@ -141,6 +234,14 @@ async function launchChromeOnce({ waitMs = 15000 } = {}) {
   ], { detached: true, stdio: "ignore" });
   child.unref();
   launchedPid = child.pid;
+  // Filet RÉSERVÉ AUX BANCS D'ESSAI (killChromeOnExit) : à la sortie du processus, le Chrome lancé ici reçoit
+  // au moins SIGTERM (un gestionnaire « exit » ne peut rien attendre d'asynchrone). Jamais en production : le
+  // Chrome Sésame survit au processus qui l'a lancé — plusieurs clients MCP (Claude Code, Cowork, app) le
+  // partagent, et l'utilisateur y travaille (code à taper, extranet ouvert) quand un serveur MCP s'arrête.
+  if (killChromeOnExit() && !exitHookInstalled) {
+    exitHookInstalled = true;
+    process.once("exit", () => { if (launchedPid) { try { process.kill(launchedPid, "SIGTERM"); } catch {} } });
+  }
   const deadline = Date.now() + waitMs;
   while (Date.now() < deadline) {
     if (await cdpReachable()) return true;
@@ -149,9 +250,65 @@ async function launchChromeOnce({ waitMs = 15000 } = {}) {
   return false;
 }
 let launchedPid = null;
-/** Arrête le Chrome lancé par ce processus (bancs d'essai). */
-export function stopLaunchedChrome() {
-  if (launchedPid) { try { process.kill(launchedPid, "SIGTERM"); } catch {} launchedPid = null; }
+let exitHookInstalled = false;
+
+/**
+ * Le Chrome lancé par ce processus doit-il recevoir SIGTERM quand le processus sort ? Seulement pour les bancs
+ * d'essai (SESAME_CHROME_HEADLESS=1) ou sur demande explicite (SESAME_KILL_CHROME_ON_EXIT=1). En production,
+ * jamais : le Chrome Sésame (profil qui reprend sa session) est partagé et survit à son lanceur.
+ */
+export function killChromeOnExit() {
+  return process.env.SESAME_CHROME_HEADLESS === "1" || process.env.SESAME_KILL_CHROME_ON_EXIT === "1";
+}
+/** Le filet « exit » a-t-il été posé dans ce processus ? (bancs d'essai) */
+export function exitHookArmed() { return exitHookInstalled; }
+
+/**
+ * Arrêt PROPRE par le protocole : Browser.close ferme les onglets et laisse Chrome écrire son état
+ * (cookies, session à reprendre, « fermé correctement »). Renvoie true si la commande est partie.
+ */
+async function closeChromeViaCdp(timeoutMs = 4000) {
+  let browser;
+  try {
+    browser = await chromium.connectOverCDP(CDP_URL, { timeout: timeoutMs });
+    const s = await browser.newBrowserCDPSession();
+    await Promise.race([s.send("Browser.close"), new Promise(r => setTimeout(r, timeoutMs))]);
+    return true;
+  } catch { return false; }
+  finally { await browser?.close().catch(() => {}); }
+}
+
+const alive = pid => { try { process.kill(pid, 0); return true; } catch { return false; } };
+async function waitGone(pids, ms) {
+  const deadline = Date.now() + ms;
+  while (Date.now() < deadline && pids.some(alive)) await new Promise(r => setTimeout(r, 300));
+  return !pids.some(alive);
+}
+
+/**
+ * Arrête le Chrome lancé par ce processus (bancs d'essai) : arrêt propre par le protocole si possible,
+ * SIGTERM sinon (et SIGKILL en dernier recours). Renvoie une promesse à ATTENDRE ; un banc d'essai qui ne
+ * l'attend pas n'est couvert par le filet « exit » que si killChromeOnExit() est vrai.
+ */
+let stopping = null;
+export function stopLaunchedChrome({ waitMs = 6000 } = {}) {
+  const pid = launchedPid;
+  if (!pid) return Promise.resolve();
+  if (stopping) return stopping;
+  // `launchedPid` n'est oublié qu'une fois le processus parti : si un banc d'essai quitte sans attendre, le
+  // filet « exit » (bancs seulement) le retrouve encore et lui envoie SIGTERM.
+  stopping = (async () => {
+    try {
+      if (await closeChromeViaCdp() && await waitGone([pid], waitMs)) return;
+      try { process.kill(pid, "SIGTERM"); } catch {}
+      if (await waitGone([pid], 3000)) return;
+      try { process.kill(pid, "SIGKILL"); } catch {}
+    } finally {
+      if (launchedPid === pid) launchedPid = null;
+      stopping = null;
+    }
+  })();
+  return stopping;
 }
 
 /** Réduit ou déplie la fenêtre Chrome qui contient l'onglet (protocole DevTools). Silencieux en cas d'échec. */
@@ -236,20 +393,25 @@ async function closeFrozenTabs(onEvent) {
 }
 
 /** PID des processus Chrome lancés sur le profil Sésame (jamais le Chrome habituel de l'utilisateur). */
-function sesameChromePids() {
-  try {
-    return execFileSync("/usr/bin/pgrep", ["-f", "--", `--user-data-dir=${CHROME_PROFILE}`], { encoding: "utf8" })
-      .trim().split("\n").filter(Boolean).map(Number);
-  } catch { return []; }
-}
+const sesameChromePids = () => chromePidsOnProfile(CHROME_PROFILE);
 
-/** Arrête (SIGTERM puis, s'il le faut, SIGKILL) tous les processus Chrome Sésame et attend qu'ils disparaissent. */
-async function killSesameChrome(waitMs = 8000) {
-  const pids = sesameChromePids();
-  for (const pid of pids) { try { process.kill(pid, "SIGTERM"); } catch {} }
+/**
+ * Arrête tous les processus Chrome Sésame : d'abord un arrêt PROPRE par le protocole (Browser.close, ≤ 8 s
+ * pour que les processus disparaissent — Chrome écrit alors cookies et session à reprendre), puis seulement
+ * SIGTERM, puis SIGKILL après `waitMs`.
+ */
+export async function killSesameChrome(waitMs = 8000) {
+  if (sesameChromePids().length === 0) return;
+  if (await closeChromeViaCdp()) {
+    const deadline = Date.now() + 8000;
+    while (Date.now() < deadline && sesameChromePids().length) await new Promise(r => setTimeout(r, 300));
+    if (sesameChromePids().length === 0) { launchedPid = null; return; }
+  }
+  for (const pid of sesameChromePids()) { try { process.kill(pid, "SIGTERM"); } catch {} }
   const deadline = Date.now() + waitMs;
   while (Date.now() < deadline && sesameChromePids().length) await new Promise(r => setTimeout(r, 300));
   for (const pid of sesameChromePids()) { try { process.kill(pid, "SIGKILL"); } catch {} }
+  launchedPid = null;
 }
 
 const errCause = e => String(e?.message || e).split("\n")[0];
@@ -268,7 +430,7 @@ export async function connect({ onEvent = () => {} } = {}) {
   }
   if (state === "down") {
     onEvent({ result: "étape", detail: "Chrome Sésame fermé — lancement automatique" });
-    const up = await launchChrome();
+    const up = await launchChrome({ onEvent });
     if (!up) {
       onEvent({ result: "échec", detail: `Chrome Sésame ne répond pas sur ${CDP_URL} après lancement` });
       throw new Error(`Chrome Sésame ne répond pas sur ${CDP_URL} après lancement. Vérifie qu'un autre Chrome n'occupe pas le port.`);
@@ -307,7 +469,7 @@ export async function connect({ onEvent = () => {} } = {}) {
   if (attempt.error) {
     onEvent({ result: "étape", detail: "attache toujours impossible — redémarrage du Chrome Sésame" });
     await killSesameChrome();
-    const up = await launchChrome();
+    const up = await launchChrome({ onEvent });
     if (up) {
       onEvent({ result: "étape", detail: "Chrome Sésame redémarré (attache impossible)" });
       justLaunched = true;
@@ -525,6 +687,12 @@ async function openLoginForm(page, site, steps) {
   await page.waitForLoadState("domcontentloaded", { timeout: 10000 }).catch(() => {});
   await page.waitForTimeout(1200);
   return true;
+}
+
+/** Un champ mot de passe (sélecteur du site ou générique) est-il visible sur l'onglet ? */
+export async function hasPasswordField(page, site) {
+  if (page.isClosed()) return false;
+  return !!(await locate(page, site, site.selectors?.password, PASS_SELECTORS));
 }
 
 /** L'onglet montre-t-il un formulaire de connexion (identifiant ou mot de passe), ou un écran « session déjà
@@ -786,10 +954,10 @@ async function tryAccountScreen(page, site, secret, steps, bail) {
     await page.waitForLoadState("networkidle", { timeout: 8000 }).catch(() => {});
     return {
       finished: true,
-      result: {
+      result: coded("ok.already_signed_in", {
         ok: true, steps, url: publicUrl(page.url()), title: await page.title().catch(() => ""),
         alreadySignedIn: true,
-      },
+      }, { confidence: await aliveSelVisible(page, site) ? "high" : "medium" }),
     };
   }
 
@@ -887,8 +1055,342 @@ async function ecarterBandeauCookies(page) {
   return null;
 }
 
-/** Le bouton de soumission est cherché près du champ rempli (son <form>, puis ses conteneurs), pas n'importe où dans la page. */
-async function submit(page, site, lastField) {
+// --- Cases « rester connecté / faire confiance à cet appareil » ------------------------------------------
+const REMEMBER_RE = /rester connect|garder ma session|se souvenir|souviens|remember|keep me (logged|signed) in|stay (signed|logged) in|trust(ed)? (this )?(device|browser|computer)|faire confiance|appareil de confiance|navigateur de confiance|ne plus (me )?demander|don.t ask again|conserver la connexion|m[ée]moriser|rester identifi/i;
+const REMEMBER_EXCLUDE_RE = /newsletter|offre|promo|marketing|actualit|cgu|cgv|conditions|terms|privacy|confidentialit|cookie|consent|accept|j.accepte|i agree|publicit|partenaire/i;
+
+/**
+ * Juste avant chaque soumission (étape 1, mot de passe, code) : coche la case « rester connecté » /
+ * « faire confiance à cet appareil » si elle est là, pour que la session (et la confiance 2FA) survive au
+ * redémarrage de Chrome. Cherche dans le <form> du champ, puis ses 6 ancêtres, une case visible et non
+ * cochée dont le libellé (label[for], label parent, aria-label, aria-labelledby, texte du conteneur parent
+ * ≤ 200 car.) correspond à REMEMBER_RE et pas à REMEMBER_EXCLUDE_RE (jamais une lettre d'information ni
+ * des conditions). Clique le libellé (sinon la case), vérifie `checked`, ajoute une étape. Une seule case
+ * par appel ; rien si site.rememberMe === false ; frame vérifiée par onSite ; aucune exception ne remonte.
+ * `field` : { el, frame } (résultat de locate) ou un Locator. `mask` : valeurs (identifiant, mot de passe)
+ * à ne jamais recopier dans l'étape : un libellé qui les contient (« Rester connecté en tant que x@y ») est
+ * remplacé par « [masqué] », comme dans readFormError ; toute adresse e-mail est masquée de même.
+ */
+export async function tickRememberMe(page, site, field, steps = [], mask = []) {
+  try {
+    if (!field || site?.rememberMe === false || page.isClosed()) return false;
+    const el = field.el || field;
+    const frame = field.frame || page.mainFrame();
+    if (!onSite(page, site, frame)) return false;
+    const found = await el.evaluate((node, { pos, neg }) => {
+      const POS = new RegExp(pos, "i"), NEG = new RegExp(neg, "i");
+      const visible = e => { const r = e.getBoundingClientRect(); const st = getComputedStyle(e); return r.width > 0 && r.height > 0 && st.visibility !== "hidden" && st.display !== "none"; };
+      const clean = s => (s || "").replace(/\s+/g, " ").trim().slice(0, 200);
+      const labelOf = cb => {
+        const parts = [];
+        if (cb.id) for (const l of document.querySelectorAll(`label[for="${CSS.escape(cb.id)}"]`)) parts.push(clean(l.innerText || l.textContent));
+        const parent = cb.closest("label");
+        if (parent) parts.push(clean(parent.innerText || parent.textContent));
+        if (cb.getAttribute("aria-label")) parts.push(clean(cb.getAttribute("aria-label")));
+        const by = cb.getAttribute("aria-labelledby");
+        if (by) for (const id of by.split(/\s+/)) { const e = document.getElementById(id); if (e) parts.push(clean(e.innerText || e.textContent)); }
+        if (!parts.filter(Boolean).length && cb.parentElement) parts.push(clean(cb.parentElement.innerText || cb.parentElement.textContent));
+        return parts.filter(Boolean).join(" | ");
+      };
+      const roots = [];
+      const form = node.closest("form");
+      if (form) roots.push(form);
+      let a = node;
+      for (let i = 0; i < 6 && a && a.parentElement; i++) { a = a.parentElement; roots.push(a); }
+      document.querySelectorAll("[data-sesame-remember]").forEach(e => e.removeAttribute("data-sesame-remember"));
+      for (const root of roots) {
+        for (const cb of root.querySelectorAll('input[type="checkbox"]')) {
+          if (cb.checked || cb.disabled || !visible(cb)) continue;
+          const label = labelOf(cb);
+          if (!label || !POS.test(label) || NEG.test(label)) continue;
+          cb.setAttribute("data-sesame-remember", "case");
+          let target = null;
+          if (cb.id) target = document.querySelector(`label[for="${CSS.escape(cb.id)}"]`);
+          if (!target) target = cb.closest("label");
+          if (target && visible(target)) target.setAttribute("data-sesame-remember", "libelle");
+          return { label: label.slice(0, 80), viaLabel: !!(target && visible(target)) };
+        }
+      }
+      return null;
+    }, { pos: REMEMBER_RE.source, neg: REMEMBER_EXCLUDE_RE.source });
+    if (!found) return false;
+    const box = frame.locator('[data-sesame-remember="case"]').first();
+    const target = found.viaLabel ? frame.locator('[data-sesame-remember="libelle"]').first() : box;
+    await target.click({ timeout: 3000 }).catch(() => {});
+    let checked = await box.isChecked().catch(() => false);
+    if (!checked && found.viaLabel) { await box.click({ timeout: 3000 }).catch(() => {}); checked = await box.isChecked().catch(() => false); }
+    if (!checked) { await box.evaluate(e => { e.click(); }).catch(() => {}); checked = await box.isChecked().catch(() => false); }
+    await frame.evaluate(() => document.querySelectorAll("[data-sesame-remember]").forEach(e => e.removeAttribute("data-sesame-remember"))).catch(() => {});
+    if (checked) steps.push(`case « rester connecté » cochée (« ${maskLabel(found.label, mask)} »)`);
+    return checked;
+  } catch { return false; }
+}
+
+/** Libellé sûr pour le journal : « [masqué] » s'il contient une valeur de `mask` (blancs normalisés) ou une adresse e-mail. */
+function maskLabel(label, mask = []) {
+  const norm = s => String(s || "").replace(/\s+/g, " ").trim();
+  const text = norm(label);
+  const flat = text.replace(/\s+/g, "");
+  for (const v of mask) {
+    const nv = norm(v);
+    if (nv.length >= 3 && (text.includes(nv) || flat.includes(nv.replace(/\s+/g, "")))) return "[masqué]";
+  }
+  return text.replace(/[^\s«»()]+@[^\s«»()]+/g, "[masqué]");
+}
+
+// --- Classifieur après soumission --------------------------------------------------------------------------
+// Frames de DÉFI (un captcha à résoudre), reconnues à leur adresse : la fenêtre d'images reCAPTCHA (/bframe),
+// hCaptcha, Turnstile (Cloudflare), Arkose/FunCaptcha, AWS WAF, DataDome, PerimeterX. Jamais la simple ancre
+// « api2/anchor » : c'est aussi le badge reCAPTCHA v3/invisible, chargé en permanence sur les pages de tout
+// site qui utilise reCAPTCHA, même connecté — le compter faisait répondre « captcha » (et poser le verrou du
+// jour) sur une session parfaitement vivante.
+const CAPTCHA_CHALLENGE_RE = /\/bframe|hcaptcha\.com\/captcha|challenges\.cloudflare\.com\/.*\/(turnstile|challenge)|arkose|funcaptcha|captcha-delivery|awswaf|datadome|perimeterx/i;
+// Ancre reCAPTCHA v2 (case « Je ne suis pas un robot ») : un défi seulement si elle est VISIBLE, de taille
+// normale (≥ 200×60) et pas « invisible » (size=invisible, ou dans .grecaptcha-badge) — c'est l'utilisateur
+// qui doit cocher la case, Sésame ne le fait pas.
+const CAPTCHA_ANCHOR_RE = /recaptcha.*\/anchor/i;
+const CAPTCHA_INVISIBLE_RE = /size=invisible/i;
+// Texte visible d'un défi. Pas le mot « challenge » nu : il est dans n'importe quelle page anglaise et dans le
+// tableau de bord Cloudflare (« Managed Challenge »), sans aucun captcha à l'écran.
+const CAPTCHA_TEXT_RE = /captcha|je ne suis pas un robot|not a robot|v[ée]rifi\w* (que vous )?[êe]tes (bien )?humain|make sure you.re human|prove you.re human|verif\w* (that )?you are human|confirm (that )?you are human|just a moment/i;
+// Mention passive du badge reCAPTCHA (« Ce site est protégé par reCAPTCHA… ») : présente sur la page de
+// connexion AVANT toute soumission, elle ne signale aucun défi. Retirée du texte avant le test.
+const CAPTCHA_BADGE_RE = /(this site is |ce site est |site )?prot[ée]g[ée]e? (by|par) recaptcha[^.\n]*|recaptcha[^.\n]{0,40}(privacy|confidentialit|terms|conditions)[^.\n]*/gi;
+
+/**
+ * Dans la page (ElementHandle.evaluate) : ce qu'il faut savoir d'une iframe pour juger si elle est un défi
+ * effectivement À L'ÉCRAN — rectangle, présence dans la fenêtre, `visibility: hidden` / `display: none` /
+ * `opacity: 0` sur l'élément ou l'un de ses ancêtres, ancêtre `.grecaptcha-badge`. Aucun eval dans la page
+ * (les CSP strictes l'interdisent) : le jugement se fait côté Node (captchaFrameIsChallenge).
+ */
+const captchaFrameFacts = el => {
+  const r = el.getBoundingClientRect();
+  const vw = window.innerWidth || document.documentElement.clientWidth, vh = window.innerHeight || document.documentElement.clientHeight;
+  let hidden = false;
+  for (let a = el, i = 0; a && i < 12; i++, a = a.parentElement) {
+    const st = getComputedStyle(a);
+    if (st.visibility === "hidden" || st.display === "none" || Number(st.opacity) === 0) { hidden = true; break; }
+  }
+  return { w: r.width, h: r.height, onScreen: !(r.right <= 0 || r.bottom <= 0 || r.left >= vw || r.top >= vh), hidden, badge: !!el.closest(".grecaptcha-badge") };
+};
+/** Adresse de défi ou d'ancre reCAPTCHA ? (premier tri, avant de regarder l'élément) */
+const captchaFrameUrl = s => CAPTCHA_CHALLENGE_RE.test(s) || CAPTCHA_ANCHOR_RE.test(s);
+/**
+ * Verdict pour une iframe d'adresse `src` et de faits `f` (captchaFrameFacts) : défi (CAPTCHA_CHALLENGE_RE)
+ * d'au moins 200×100, ou ancre reCAPTCHA v2 d'au moins 200×60 hors badge et hors « invisible » — dans la
+ * fenêtre et effectivement visible.
+ */
+function captchaFrameIsChallenge(src, f) {
+  if (!f || f.hidden || !f.onScreen) return false;
+  const s = String(src || "");
+  if (CAPTCHA_CHALLENGE_RE.test(s)) return f.w >= 200 && f.h >= 100;
+  if (CAPTCHA_ANCHOR_RE.test(s)) return !CAPTCHA_INVISIBLE_RE.test(s) && !f.badge && f.w >= 200 && f.h >= 60;
+  return false;
+}
+
+/**
+ * Un captcha ou une vérification humaine est-il à l'écran ? Vrai si une iframe de DÉFI effectivement visible
+ * est là (captchaFrameIsChallenge : jamais le badge reCAPTCHA v3/invisible), ou si le texte visible (4000
+ * premiers caractères du corps, mention passive « protégé par reCAPTCHA » retirée) correspond à
+ * CAPTCHA_TEXT_RE. Ne lève jamais.
+ */
+export async function detectCaptcha(page) {
+  if (!page || page.isClosed()) return false;
+  try {
+    // 1. Iframes du document principal, par leur attribut src (ou data-src).
+    const srcs = await page.evaluate(() => [...document.querySelectorAll("iframe")].map(f => f.getAttribute("src") || f.getAttribute("data-src") || "")).catch(() => []);
+    for (let i = 0; i < srcs.length; i++) {
+      if (!captchaFrameUrl(srcs[i])) continue;
+      const facts = await page.locator("iframe").nth(i).evaluate(captchaFrameFacts, null, { timeout: 1000 }).catch(() => null);
+      if (captchaFrameIsChallenge(srcs[i], facts)) return true;
+    }
+    // 2. Frames dont l'adresse réelle (après redirections, ou posée par script) n'est pas dans l'attribut src.
+    for (const f of page.frames()) {
+      if (f === page.mainFrame()) continue;
+      const url = f.url() || "";
+      if (!captchaFrameUrl(url)) continue;
+      const owner = await f.frameElement().catch(() => null);
+      if (!owner) continue;
+      const facts = await owner.evaluate(captchaFrameFacts).catch(() => null);
+      await owner.dispose().catch(() => {});
+      if (captchaFrameIsChallenge(url, facts)) return true;
+    }
+    const body = await page.evaluate(() => (document.body?.innerText || "").slice(0, 4000)).catch(() => "");
+    return CAPTCHA_TEXT_RE.test(body.replace(CAPTCHA_BADGE_RE, ""));
+  } catch { return false; }
+}
+
+const FORM_ERROR_SEL = "[role=alert], .error, .alert, [class*=error], [class*=invalid], [aria-invalid=true] ~ *, [id*=error], .help-block, .form-text";
+const FORM_ERROR_RE = /incorrect|invalid|invalide|erron|wrong|doesn.t match|ne correspond|try again|r[ée]essay|unrecognized|non reconnu|inconnu|verrouill|locked|too many|trop de tentatives|refus|denied|unable to (sign|log)|impossible de vous/i;
+/** Toute URL d'un texte réduite à origine + chemin (jamais un jeton), sans dépendre de login.js. */
+const scrubText = s => String(s).replace(/https?:\/\/[^\s"')<>]+/g, u => publicUrl(u));
+
+/**
+ * Texte d'erreur visible près du formulaire après soumission (mot de passe refusé, compte verrouillé…) :
+ * éléments FORM_ERROR_SEL dans le <form> du champ, puis ses 6 ancêtres (puis le corps si `field` manque),
+ * dont le texte correspond à FORM_ERROR_RE. Renvoie ≤ 120 caractères, sans URL, ou null. `mask` : valeurs
+ * (identifiant, mot de passe) qui ne doivent JAMAIS apparaître — remplacées par « [masqué] ».
+ */
+export async function readFormError(page, site, field, mask = []) {
+  if (!page || page.isClosed()) return null;
+  try {
+    const el = field ? (field.el || field) : null;
+    const frame = field?.frame || page.mainFrame();
+    if (field && !onSite(page, site, frame)) return null;
+    // Appelé par Locator.evaluate (node, opts) ou par Frame.evaluate (opts seul) : même fonction.
+    const fn = (node, opts) => {
+      if (!opts) { opts = node; node = null; }
+      const { sel, re } = opts;
+      const RE = new RegExp(re, "i");
+      const visible = e => { const r = e.getBoundingClientRect(); const st = getComputedStyle(e); return r.width > 0 && r.height > 0 && st.visibility !== "hidden" && st.display !== "none"; };
+      const roots = [];
+      if (node) {
+        const form = node.closest("form");
+        if (form) roots.push(form);
+        let a = node;
+        for (let i = 0; i < 6 && a && a.parentElement; i++) { a = a.parentElement; roots.push(a); }
+      } else roots.push(document.body);
+      for (const root of roots) {
+        let list;
+        try { list = root.querySelectorAll(sel); } catch { continue; }
+        for (const e of list) {
+          if (!visible(e)) continue;
+          const text = (e.innerText || e.textContent || "").replace(/\s+/g, " ").trim();
+          if (text && text.length <= 600 && RE.test(text)) return text;
+        }
+      }
+      return null;
+    };
+    const opts = { sel: FORM_ERROR_SEL, re: FORM_ERROR_RE.source };
+    let raw = null;
+    let near = false;
+    if (el) {
+      // Le champ a pu disparaître avec sa page (navigation après l'étape 1) : on le résout SANS attendre —
+      // Locator.evaluate attendrait son réattachement 30 s — et, s'il n'est plus là, on cherche dans le corps.
+      const h = await el.elementHandle({ timeout: 500 }).catch(() => null);
+      if (h) {
+        near = true;
+        raw = await h.evaluate(fn, opts).catch(() => null);
+        await h.dispose().catch(() => {});
+      }
+    }
+    if (!near) raw = await frame.evaluate(fn, opts).catch(() => null);
+    if (!raw) return null;
+    let text = scrubText(raw);
+    const collapse = s => String(s || "").replace(/\s+/g, " ").trim();
+    const bare = s => String(s || "").replace(/\s+/g, "").toLowerCase();
+    for (const v of mask) {
+      const val = collapse(v);
+      if (!val) continue;
+      // Le texte lu a ses blancs normalisés (une tabulation, deux espaces, un retour à la ligne → un espace) :
+      // la valeur l'est aussi, et chaque blanc vaut « un ou plusieurs blancs ». Une seule passe, insensible à
+      // la casse ; si la valeur apparaît encore (blancs compris ou non — très courte, contenue dans le masque
+      // lui-même), tout le texte est masqué plutôt que de laisser passer quoi que ce soit.
+      const pattern = val.split(" ").map(part => part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("\\s+");
+      text = text.replace(new RegExp(pattern, "gi"), "[masqué]");
+      if (bare(text).includes(bare(val))) text = "[masqué]";
+    }
+    return text.slice(0, 120);
+  } catch { return null; }
+}
+
+/** `session.aliveSel` (sélecteur visible seulement connecté) est-il à l'écran ? false sans sélecteur. */
+export async function aliveSelVisible(page, site) {
+  const sel = site?.session?.aliveSel;
+  if (!sel || !page || page.isClosed()) return false;
+  return !!(await locate(page, site, sel, []).catch(() => null));
+}
+
+/** Solidité d'un verdict « connecté » : high (successUrl vérifié ou aliveSel visible), medium (looksSignedIn), low sinon. */
+async function signedInConfidence(page, site, { successVerified = false } = {}) {
+  if (successVerified) return "high";
+  if (await aliveSelVisible(page, site)) return "high";
+  if (await looksSignedIn(page, site).catch(() => false)) return "medium";
+  return "low";
+}
+
+/** Pose un code sur un résultat de fillLogin (voir src/outcomes.js). */
+const coded = (code, result, extra) => withOutcome(result, code, extra);
+
+/** Frame qui possède un Locator (frame principale par défaut). */
+async function frameOf(loc, page) {
+  try {
+    const h = await loc.elementHandle({ timeout: 1000 });
+    const f = h ? await h.ownerFrame() : null;
+    await h?.dispose().catch(() => {});
+    return f || page.mainFrame();
+  } catch { return page.mainFrame(); }
+}
+
+// --- Sonde de session --------------------------------------------------------------------------------------
+// Même regex que looksSignedIn : une adresse de connexion/déconnexion/erreur n'est jamais une cible de sonde.
+const NOT_PROBE_PATH_RE = /log-?in|log-?out|sign-?in|sign-?up|auth|connexion|deconnexion|erreur|error|404|not-?found/i;
+const deadUrlMatches = (site, url) => {
+  const re = site?.session?.deadUrlRe;
+  if (!re) return false;
+  try { return new RegExp(re, "i").test(url); } catch { return String(url).includes(re); }
+};
+
+/**
+ * Sonde la session d'un site SANS rien remplir ni lire de secret : dit si l'onglet du site est connecté
+ * (alive), déconnecté (dead), indéterminé (unknown) ou au milieu d'un défi (challenge : mot de passe, code
+ * ou captcha à l'écran — alors AUCUNE navigation, on ne casse pas un parcours en cours).
+ * Cible de la sonde : site.session.probeUrl ; à défaut l'URL courante de l'onglet si elle est sur le site
+ * et ne ressemble pas à une page de connexion/déconnexion ; sinon loginUrl. Sans onglet : openPage. Avec :
+ * page.goto. Puis jusqu'à 8 s (pas de 500 ms) tant que rien de concluant n'apparaît (redirections).
+ * Verdict dans cet ordre : deadUrlRe ⇒ dead ; aliveSel visible ⇒ alive ; formulaire ⇒ dead ;
+ * looksSignedIn ⇒ alive ; sinon unknown.
+ * Renvoie { state, page, url (publique), reason, aliveSel (true si c'est le sélecteur qui a tranché) }.
+ */
+export async function probeSession(browser, site, { onEvent = () => {} } = {}) {
+  const session = site?.session || {};
+  const loginUrl = site.loginUrl || `https://${site.domain}/`;
+  let page = await claimSiteTab(browser, site, { onEvent });
+  const finish = (state, reason, extra = {}) => {
+    const url = publicUrl(page && !page.isClosed() ? page.url() : "");
+    onEvent({ result: "sonde", detail: `${state} — ${reason}${url ? ` (${url})` : ""}` });
+    return { state, page, url, reason, ...extra };
+  };
+  // 1. Défi en cours → aucune navigation.
+  if (page) {
+    if (await locate(page, site, site.selectors?.password, PASS_SELECTORS)) return finish("challenge", "champ mot de passe à l'écran", { challenge: "password" });
+    const sf = await detectSecondFactor(page, site);
+    if (sf) return finish("challenge", `code attendu (${sf.detail})`, { challenge: "code", secondFactor: sf });
+    if (await detectCaptcha(page)) return finish("challenge", "captcha ou vérification humaine à l'écran", { challenge: "captcha" });
+  }
+  // 2. Cible.
+  let target = session.probeUrl;
+  if (!target && page) {
+    const cur = page.url();
+    let pathOk = false;
+    try { const u = new URL(cur); pathOk = !NOT_PROBE_PATH_RE.test(u.pathname + u.hash); } catch {}
+    if (siteMatchesUrl(site, cur) && pathOk && !deadUrlMatches(site, cur)) target = cur;
+  }
+  if (!target) target = loginUrl;
+  if (!page) page = await openPage(browser, target);
+  else await page.goto(target, { waitUntil: "domcontentloaded", timeout: 30000 }).catch(() => {});
+  await page.waitForLoadState("domcontentloaded", { timeout: 10000 }).catch(() => {});
+  // 3. Laisser les redirections finir : jusqu'à 8 s tant que rien de concluant n'est là.
+  const deadline = Date.now() + 8000;
+  let verdict = null;
+  const judge = async () => {
+    if (page.isClosed()) return { state: "unknown", reason: "onglet fermé pendant la sonde" };
+    const url = page.url();
+    if (deadUrlMatches(site, url)) return { state: "dead", reason: "adresse de session morte (deadUrlRe)" };
+    if (await aliveSelVisible(page, site)) return { state: "alive", reason: "sélecteur de session visible (aliveSel)", aliveSel: true };
+    if (await hasLoginFields(page, site)) return { state: "dead", reason: "formulaire de connexion affiché" };
+    if (await looksSignedIn(page, site)) return { state: "alive", reason: "page interne avec signe de session" };
+    return null;
+  };
+  while (!(verdict = await judge()) && Date.now() < deadline) await page.waitForTimeout(500).catch(() => {});
+  if (!verdict) verdict = { state: "unknown", reason: "ni formulaire ni signe de session après 8 s" };
+  return finish(verdict.state, verdict.reason, { aliveSel: !!verdict.aliveSel });
+}
+
+/** Le bouton de soumission est cherché près du champ rempli (son <form>, puis ses conteneurs), pas n'importe où dans la page.
+ *  Juste avant : la case « rester connecté » est cochée si elle existe (tickRememberMe). */
+async function submit(page, site, lastField, steps = [], mask = []) {
+  if (lastField) await tickRememberMe(page, site, { el: lastField, frame: await frameOf(lastField, page) }, steps, mask);
   if (site.selectors?.submit) {
     const hit = await locate(page, site, site.selectors.submit, []);
     if (hit && await hit.el.click({ timeout: 5000 }).then(() => true).catch(() => false)) return "bouton";
@@ -1104,7 +1606,11 @@ export async function fillLogin(page, site, secret, { submitForm = true, waitSec
   const bandeau = await ecarterBandeauCookies(page).catch(() => null);
   if (bandeau) steps.push(`bandeau de cookies refusé (« ${bandeau} »)`);
   const where = frame => (frame && frame !== page.mainFrame() ? ` (iframe ${publicUrl(frame.url())})` : "");
-  const gone = hostname => ({ ok: false, steps, url: publicUrl(page.isClosed() ? "" : page.url()), reason: `onglet parti vers ${hostname || "une autre page"} : remplissage abandonné` });
+  const gone = hostname => coded("fail.tab_left", { ok: false, steps, url: publicUrl(page.isClosed() ? "" : page.url()), reason: `onglet parti vers ${hostname || "une autre page"} : remplissage abandonné` });
+  const mask = [secret?.password, secret?.username].filter(v => typeof v === "string" && v.length > 0);
+  // Codes d'une attente de code interrompue (waitForSecondFactor) : retour au mot de passe = code refusé, sinon onglet parti.
+  const interruptedCode = reason => (/retour au formulaire mot de passe/.test(reason || "") ? "fail.code_rejected" : "fail.tab_left");
+  const pendingActor = autoCode ? "sesame" : "user";
   /**
    * Abandon parce que l'onglet est parti hors périmètre : apprentissage assisté. Si la nouvelle page
    * (frame principale, https) montre déjà un champ mot de passe, on ne se contente pas d'abandonner :
@@ -1115,7 +1621,7 @@ export async function fillLogin(page, site, secret, { submitForm = true, waitSec
     if (!page.isClosed()) {
       const nd = await detectNeedsDomain(page);
       if (nd && nd !== site.domain) {
-        return { ok: false, steps, url: publicUrl(page.url()), needsDomain: nd, reason: `onglet parti vers ${nd} pour le mot de passe : domaine à autoriser ?` };
+        return coded("fail.domain_approval", { ok: false, steps, url: publicUrl(page.url()), needsDomain: nd, reason: `onglet parti vers ${nd} pour le mot de passe : domaine à autoriser ?` });
       }
     }
     return gone(page.isClosed() ? "(onglet fermé)" : publicUrl(page.url()));
@@ -1147,10 +1653,10 @@ export async function fillLogin(page, site, secret, { submitForm = true, waitSec
     if (!found) {
       if (!(await findClickableByText(page, site, PROVIDER_ENTRY_RE, LOGIN_ENTRY_EXCLUDE_RE)) && await looksSignedIn(page, site)) {
         steps.push("session déjà ouverte : rien à faire");
-        return { ok: true, steps, url: publicUrl(page.url()), title: await page.title().catch(() => ""), alreadySignedIn: true };
+        return coded("ok.already_signed_in", { ok: true, steps, url: publicUrl(page.url()), title: await page.title().catch(() => ""), alreadySignedIn: true }, { confidence: await aliveSelVisible(page, site) ? "high" : "medium" });
       }
-      return { ok: false, steps, url: publicUrl(page.url()),
-        reason: `« ${site.key} » se connecte par ${PROVIDERS[site.authProvider]?.label || site.authProvider}, mais le bouton n'est pas sur cette page. Ouvre-la toi-même, ou corrige le sélecteur (providerSel).` };
+      return coded("fail.no_form", { ok: false, steps, url: publicUrl(page.url()),
+        reason: `« ${site.key} » se connecte par ${PROVIDERS[site.authProvider]?.label || site.authProvider}, mais le bouton n'est pas sur cette page. Ouvre-la toi-même, ou corrige le sélecteur (providerSel).` });
     }
     const label = PROVIDERS[found.provider]?.label || found.provider;
     const step = msg => { steps.push(msg); onStep?.({ detail: msg }); };
@@ -1171,7 +1677,7 @@ export async function fillLogin(page, site, secret, { submitForm = true, waitSec
       const choice = await chooseProviderAccount({ site, label, getCur, step });
       if (choice.stop) {
         const where = publicUrl(getCur().url());
-        return { ok: false, steps, url: where, needsProvider: found.provider, reason: choice.stop.reason };
+        return coded("fail.provider_intervention", { ok: false, steps, url: where, needsProvider: found.provider, reason: choice.stop.reason });
       }
       // Revenu sur le site (la fenêtre du fournisseur, s'il y en avait une, s'est refermée) : on laisse la redirection finir.
       const until = Date.now() + 10000;
@@ -1183,12 +1689,12 @@ export async function fillLogin(page, site, secret, { submitForm = true, waitSec
     // Revenu sur le site et connecté : la session du fournisseur a suffi.
     if (siteMatchesUrl(site, page.url()) && !(await hasLoginFields(page, site))) {
       step(`connexion par ${label} acceptée`);
-      return { ok: true, steps, url: publicUrl(page.url()), title: await page.title().catch(() => ""), viaProvider: found.provider };
+      return coded("ok.via_provider", { ok: true, steps, url: publicUrl(page.url()), title: await page.title().catch(() => ""), viaProvider: found.provider }, { confidence: await signedInConfidence(page, site) });
     }
     // Toujours chez le fournisseur (ou revenu sans être connecté) : il demande quelque chose. On n'y touche pas.
     const here = publicUrl(page.url());
-    return { ok: false, steps, url: here, needsProvider: found.provider,
-      reason: `${label} demande une intervention (choix du compte, mot de passe, code ou validation) sur ${here}. Sésame ne saisit jamais rien chez un fournisseur d'identité : ouvre cette page et termine la connexion, elle restera ouverte ensuite.` };
+    return coded("fail.provider_intervention", { ok: false, steps, url: here, needsProvider: found.provider,
+      reason: `${label} demande une intervention (choix du compte, mot de passe, code ou validation) sur ${here}. Sésame ne saisit jamais rien chez un fournisseur d'identité : ouvre cette page et termine la connexion, elle restera ouverte ensuite.` });
   }
 
   let user = secret.username ? await locateUser(page, site) : null;
@@ -1233,7 +1739,11 @@ export async function fillLogin(page, site, secret, { submitForm = true, waitSec
     if (await looksSignedIn(page, site)) {
       steps.push("session déjà ouverte : le site est connecté, aucun formulaire à remplir");
       await page.waitForLoadState("networkidle", { timeout: 5000 }).catch(() => {});
-      return { ok: true, steps, url: publicUrl(page.url()), title: await page.title().catch(() => ""), alreadySignedIn: true };
+      return coded("ok.already_signed_in", { ok: true, steps, url: publicUrl(page.url()), title: await page.title().catch(() => ""), alreadySignedIn: true }, { confidence: await aliveSelVisible(page, site) ? "high" : "medium" });
+    }
+    // Captcha ou vérification humaine à la place du formulaire : le dire, plutôt qu'« aucun champ ».
+    if (await detectCaptcha(page)) {
+      return coded("fail.captcha", { ok: false, steps, url: publicUrl(page.url()), reason: "Un captcha ou une vérification humaine s'affiche à la place du formulaire : Sésame n'y touche pas. L'utilisateur doit passer cette étape lui-même dans le Chrome Sésame." });
     }
     // La page de connexion mène hors du périmètre du site (fournisseur d'identité sur un autre hôte, comme
     // idmsa.apple.com pour Apple) : les champs y sont ignorés à dessein. Le dire, et proposer d'autoriser ce
@@ -1242,11 +1752,11 @@ export async function fillLogin(page, site, secret, { submitForm = true, waitSec
     if (host && !siteMatchesUrl(site, page.url())) {
       const cand = validateExtraDomain(site.domain, host);
       if (cand.domain) {
-        return { ok: false, steps, url: publicUrl(page.url()), needsDomain: cand.domain,
-          reason: `la page de connexion de « ${site.key} » mène à ${cand.domain}, hors du périmètre du site : domaine à autoriser ?` };
+        return coded("fail.domain_approval", { ok: false, steps, url: publicUrl(page.url()), needsDomain: cand.domain,
+          reason: `la page de connexion de « ${site.key} » mène à ${cand.domain}, hors du périmètre du site : domaine à autoriser ?` });
       }
     }
-    return { ok: false, steps, reason: "Aucun champ identifiant/mot de passe visible sur cet onglet. Ouvre la page de connexion d'abord (sesame_open_login)." };
+    return coded("fail.no_form", { ok: false, steps, url: publicUrl(page.url()), reason: "Aucun champ identifiant/mot de passe visible sur cet onglet. Ouvre la page de connexion d'abord (sesame_open_login)." });
   }
 
   if (user) {
@@ -1269,7 +1779,7 @@ export async function fillLogin(page, site, secret, { submitForm = true, waitSec
 
   if (!pass && user) {
     // Connexion en deux étapes confirmée : on valide l'identifiant et on attend le mot de passe.
-    const how = await submit(page, site, user.el);
+    const how = await submit(page, site, user.el, steps, [secret?.password, secret?.username]);
     steps.push(`étape 1 validée (${how})`);
     await page.waitForLoadState("domcontentloaded", { timeout: 15000 }).catch(() => {});
     for (let i = 0; i < 20 && !pass; i++) {
@@ -1293,26 +1803,53 @@ export async function fillLogin(page, site, secret, { submitForm = true, waitSec
         steps.push(`code demandé par le site, sans mot de passe (${sf.detail})`);
         if (onSecondFactor) { try { await onSecondFactor(sf); } catch {} }
         if (!waitSecondFactor) {
-          return { ok: true, steps, url: publicUrl(page.url()), title: await page.title().catch(() => ""),
+          // Code attendu, attente désactivée par l'appelant : en attente (ok: false), pas une réussite.
+          return coded("pending.second_factor", { ok: false, steps, url: publicUrl(page.url()), title: await page.title().catch(() => ""),
             secondFactor: { pending: true, ...sf },
-            hint: "Ce site n'a pas de mot de passe : il envoie un code. L'utilisateur doit le saisir, puis appelle sesame_wait_code." };
+            reason: "Ce site n'a pas de mot de passe : il envoie un code. L'utilisateur doit le saisir, puis appelle sesame_wait_code.",
+            hint: "Ce site n'a pas de mot de passe : il envoie un code. L'utilisateur doit le saisir, puis appelle sesame_wait_code." }, { actor: pendingActor });
         }
         const w = await waitForSecondFactor(page, site, { timeoutSec: secondFactorTimeoutSec, autoCode });
         if (!w.done) {
           const pending = w.reason === "délai dépassé";
-          return { ok: false, steps, url: publicUrl(page.isClosed() ? "" : page.url()),
+          return coded(pending ? "pending.second_factor" : interruptedCode(w.reason), { ok: false, steps, url: publicUrl(page.isClosed() ? "" : page.url()),
             reason: pending
               ? `Ce site n'a pas de mot de passe : il attend un code, non saisi dans le délai (${secondFactorTimeoutSec} s). Appelle sesame_wait_code quand l'utilisateur est prêt.`
               : `Attente du code interrompue : ${w.reason}.`,
-            secondFactor: { pending, ...sf } };
+            secondFactor: { pending, ...sf } }, pending ? { actor: pendingActor } : {});
         }
         steps.push(w.auto ? `code récupéré dans votre boîte mail et saisi par Sésame, connexion poursuivie (${w.elapsedSec} s)` : `code saisi par l'utilisateur, connexion poursuivie (${w.elapsedSec} s)`);
         await page.waitForLoadState("domcontentloaded", { timeout: 10000 }).catch(() => {});
-        return { ok: true, steps, url: publicUrl(page.isClosed() ? "" : page.url()),
-          title: page.isClosed() ? "" : await page.title().catch(() => ""), secondFactor: { pending: false, ...sf } };
+        return coded("ok.signed_in", { ok: true, steps, url: publicUrl(page.isClosed() ? "" : page.url()),
+          title: page.isClosed() ? "" : await page.title().catch(() => ""), secondFactor: { pending: false, ...sf } },
+          { confidence: page.isClosed() ? "low" : await signedInConfidence(page, site) });
       }
-      if (sf) steps.push(`la page évoque un code (${sf.detail}) sans champ de saisie`);
-      return { ok: false, steps, url: publicUrl(page.url()), reason: "Le champ mot de passe n'est pas apparu après l'identifiant (captcha, code SMS, ou sélecteur à préciser)." };
+      // Ni mot de passe ni champ de code après l'identifiant : captcha ? session ouverte dès l'identifiant
+      // (Expedia, identité vivante) ? identifiant refusé ? sinon « pas d'étape mot de passe ».
+      const here = publicUrl(page.isClosed() ? "" : page.url());
+      if (await detectCaptcha(page)) {
+        return coded("fail.captcha", { ok: false, steps, url: here, reason: "Un captcha ou une vérification humaine s'est interposé après l'identifiant : Sésame n'y touche pas. L'utilisateur doit passer cette étape lui-même dans le Chrome Sésame." });
+      }
+      let successVerified = false;
+      if (site.successUrl && !page.isClosed()) {
+        const landed = page.url();
+        try { successVerified = new RegExp(site.successUrl, "i").test(landed); } catch { successVerified = landed.includes(site.successUrl); }
+      }
+      if (successVerified || await aliveSelVisible(page, site) || await looksSignedIn(page, site)) {
+        steps.push("session ouverte dès l'identifiant, sans mot de passe");
+        return coded("ok.signed_in_after_step1", { ok: true, steps, url: here, title: page.isClosed() ? "" : await page.title().catch(() => "") },
+          { confidence: await signedInConfidence(page, site, { successVerified }) });
+      }
+      const errorText = await readFormError(page, site, user, mask);
+      if (errorText) {
+        return coded("fail.password_rejected", { ok: false, steps, url: here, errorText, reason: `Identifiant refusé par le site après l'étape 1 : « ${errorText} ».` });
+      }
+      if (sf) {
+        steps.push(`la page évoque un code (${sf.detail}) sans champ de saisie`);
+        return coded("pending.second_factor_no_field", { ok: false, steps, url: here, secondFactor: { pending: true, ...sf },
+          reason: `La page évoque un 2e facteur sans champ de saisie (${sf.detail}) : l'utilisateur doit d'abord choisir la méthode ou valider sur son téléphone. Appelle sesame_wait_code ensuite.` });
+      }
+      return coded("fail.no_password_step", { ok: false, steps, url: here, reason: "Le champ mot de passe n'est pas apparu après l'identifiant (ni code, ni session ouverte : sélecteur à préciser, ou le site a changé)." });
     }
   }
 
@@ -1328,8 +1865,8 @@ export async function fillLogin(page, site, secret, { submitForm = true, waitSec
       const userAgain = secret.username ? await locateUser(page, site) : null;
       const passAgain = await locate(page, site, site.selectors?.password, PASS_SELECTORS);
       if (!userAgain) {
-        return { ok: false, steps, url: publicUrl(page.url()),
-          reason: `Cette page demande le mot de passe d'un AUTRE compte que celui enregistré pour « ${site.key} » : une session d'un autre compte est ouverte dans ce navigateur. Rien n'a été saisi. Déconnecte ce compte, ou ouvre directement la page de connexion du bon espace.` };
+        return coded("fail.wrong_account", { ok: false, steps, url: publicUrl(page.url()),
+          reason: `Cette page demande le mot de passe d'un AUTRE compte que celui enregistré pour « ${site.key} » : une session d'un autre compte est ouverte dans ce navigateur. Rien n'a été saisi. Déconnecte ce compte, ou ouvre directement la page de connexion du bon espace.` });
       }
       if (!onSite(page, site, userAgain.frame)) return await bail();
       await typeInto(userAgain.el, secret.username);
@@ -1338,7 +1875,7 @@ export async function fillLogin(page, site, secret, { submitForm = true, waitSec
       if (passAgain) pass = passAgain;
       else {
         const found = await (async () => { for (let i = 0; i < 16; i++) { await page.waitForTimeout(500); const h = await locate(page, site, site.selectors?.password, PASS_SELECTORS); if (h) return h; } return null; })();
-        if (!found) return { ok: false, steps, url: publicUrl(page.url()), reason: "Après changement de compte, le champ mot de passe n'est pas réapparu." };
+        if (!found) return coded("fail.no_password_step", { ok: false, steps, url: publicUrl(page.url()), reason: "Après changement de compte, le champ mot de passe n'est pas réapparu." });
         pass = found;
       }
     }
@@ -1359,9 +1896,8 @@ export async function fillLogin(page, site, secret, { submitForm = true, waitSec
   steps.push(`mot de passe rempli${where(pass.frame)}`);
 
   let secondFactor = null;
-  let hint;
   if (submitForm) {
-    const how = await submit(page, site, pass.el);
+    const how = await submit(page, site, pass.el, steps, [secret?.password, secret?.username]);
     steps.push(`formulaire soumis (${how})`);
     await page.waitForLoadState("domcontentloaded", { timeout: 20000 }).catch(() => {});
     // Laisser le site basculer avant de juger : mot de passe refusé ou 2e facteur ?
@@ -1369,23 +1905,36 @@ export async function fillLogin(page, site, secret, { submitForm = true, waitSec
     if (!passwordGone) {
       // Le formulaire est toujours là : la connexion n'a PAS abouti. On vide le champ, puis on répond un
       // échec — longtemps Sésame renvoyait « ok » avec un simple indice, et l'IA annonçait une réussite.
+      // Classement : fournisseur d'identité (SSO) → captcha → message d'erreur du site → formulaire inchangé.
       const still = await locate(page, site, site.selectors?.password, PASS_SELECTORS);
       if (still) await still.el.fill("").catch(() => {});
       const body = await page.evaluate(() => document.body?.innerText || "").catch(() => "");
       const prov = await findProviderButton(page, site);
       if (SSO_TEXT_RE.test(body) || prov) {
         const label = prov ? (PROVIDERS[prov.provider]?.label || prov.provider) : "un fournisseur d'identité";
-        return { ok: false, steps, url: publicUrl(page.url()), needsProvider: prov?.provider || "sso",
-          reason: `« ${site.key} » n'a pas de mot de passe : ce compte se connecte par ${label} (authentification unique). Le mot de passe a été refusé. Déclare le site avec authProvider pour que Sésame clique ce bouton au lieu d'essayer un mot de passe.` };
+        return coded("fail.provider_needed", { ok: false, steps, url: publicUrl(page.url()), needsProvider: prov?.provider || "sso",
+          reason: `« ${site.key} » n'a pas de mot de passe : ce compte se connecte par ${label} (authentification unique). Le mot de passe a été refusé. Déclare le site avec authProvider pour que Sésame clique ce bouton au lieu d'essayer un mot de passe.` });
       }
-      return { ok: false, steps, url: publicUrl(page.url()),
-        reason: "Le mot de passe a été refusé, ou un captcha s'est interposé : le champ est encore affiché après soumission (il a été vidé)." };
+      if (await detectCaptcha(page)) {
+        return coded("fail.captcha", { ok: false, steps, url: publicUrl(page.url()),
+          reason: "Un captcha ou une vérification humaine s'est interposé : le formulaire est encore affiché après soumission (le champ a été vidé). L'utilisateur doit passer cette étape lui-même dans le Chrome Sésame." });
+      }
+      const errorText = await readFormError(page, site, still || pass, mask);
+      if (errorText) {
+        return coded("fail.password_rejected", { ok: false, steps, url: publicUrl(page.url()), errorText,
+          reason: `Le site a refusé la connexion : « ${errorText} » (le champ mot de passe a été vidé). Vérifie l'identifiant et le mot de passe enregistrés.` });
+      }
+      return coded("fail.form_unchanged", { ok: false, steps, url: publicUrl(page.url()),
+        reason: "Le formulaire est encore affiché après soumission, sans message d'erreur ni captcha visibles (le champ mot de passe a été vidé). Le site n'a peut-être pas réagi : réessaie plus tard." });
     } else if (!page.isClosed()) {
       await page.waitForTimeout(800);
       const sf = await detectSecondFactor(page, site);
       if (sf && sf.kind === "texte-seul") {
         steps.push(`la page évoque un code (${sf.detail}) sans champ de saisie`);
-        hint = "La page évoque un 2e facteur sans champ visible (validation sur téléphone ? choix de méthode ?) : vérifie l'onglet, puis appelle sesame_wait_code une fois le champ de code affiché.";
+        return coded("pending.second_factor_no_field", { ok: false, steps, url: publicUrl(page.url()), title: await page.title().catch(() => ""),
+          secondFactor: { pending: true, ...sf },
+          reason: "La page évoque un 2e facteur sans champ visible (validation sur téléphone ? choix de méthode ?) : vérifie l'onglet, puis appelle sesame_wait_code une fois le champ de code affiché.",
+          hint: "La page évoque un 2e facteur sans champ visible (validation sur téléphone ? choix de méthode ?) : vérifie l'onglet, puis appelle sesame_wait_code une fois le champ de code affiché." });
       } else if (sf) {
         steps.push(`code demandé par le site (${sf.detail})`);
         if (onSecondFactor) { try { await onSecondFactor(sf); } catch {} }
@@ -1393,45 +1942,55 @@ export async function fillLogin(page, site, secret, { submitForm = true, waitSec
           const w = await waitForSecondFactor(page, site, { timeoutSec: secondFactorTimeoutSec, autoCode });
           if (!w.done) {
             const pending = w.reason === "délai dépassé";
-            return {
+            return coded(pending ? "pending.second_factor" : interruptedCode(w.reason), {
               ok: false, steps, url: publicUrl(page.isClosed() ? "" : page.url()),
               reason: pending
                 ? `L'utilisateur n'a pas saisi le code dans le délai (${secondFactorTimeoutSec} s). Le formulaire est toujours ouvert : appelle sesame_wait_code quand l'utilisateur est prêt.`
                 : `Attente du code interrompue : ${w.reason}.`,
               secondFactor: { pending, ...sf },
-            };
+            }, pending ? { actor: pendingActor } : {});
           }
           steps.push(w.auto ? `code récupéré dans votre boîte mail et saisi par Sésame, connexion poursuivie (${w.elapsedSec} s)` : `code saisi par l'utilisateur, connexion poursuivie (${w.elapsedSec} s)`);
           secondFactor = { pending: false, ...sf };
           await page.waitForLoadState("domcontentloaded", { timeout: 10000 }).catch(() => {});
           await page.waitForTimeout(800);
         } else {
-          secondFactor = { pending: true, ...sf };
-          hint = "Le site attend un code (2e facteur) : l'utilisateur doit le saisir dans le Chrome Sésame, puis appelle sesame_wait_code.";
+          // Code attendu, attente désactivée par l'appelant : en attente (ok: false), pas une réussite.
+          return coded("pending.second_factor", { ok: false, steps, url: publicUrl(page.url()), title: await page.title().catch(() => ""),
+            secondFactor: { pending: true, ...sf },
+            reason: "Le site attend un code (2e facteur) : l'utilisateur doit le saisir dans le Chrome Sésame, puis appelle sesame_wait_code.",
+            hint: "Le site attend un code (2e facteur) : l'utilisateur doit le saisir dans le Chrome Sésame, puis appelle sesame_wait_code." }, { actor: pendingActor });
         }
       }
     }
   }
 
+  // Interstitiel anti-robot APRÈS la soumission (le mot de passe a disparu, mais un défi a pris sa place).
+  // Jugé AVANT successUrl : le défi de Booking s'affiche sur account.booking.com, pas sur l'extranet attendu —
+  // conclure « arrivé ailleurs, mauvais compte » serait faux et cacherait le chemin humain.
+  if (submitForm && !page.isClosed() && await detectCaptcha(page)) {
+    return coded("fail.captcha", { ok: false, steps, url: publicUrl(page.url()),
+      reason: "Après la soumission, un captcha ou une vérification humaine s'affiche : Sésame n'y touche pas. L'utilisateur doit passer cette étape lui-même dans le Chrome Sésame." });
+  }
+
   // Certaines connexions aboutissent « quelque part » sur le même domaine sans être la bonne : l'extranet
   // partenaire de Booking et son site voyageur partagent booking.com. `successUrl` dit où l'on doit arriver.
+  let successVerified = false;
   if (site.successUrl && !page.isClosed()) {
     const landed = page.url();
-    let okHere = false;
-    try { okHere = new RegExp(site.successUrl, "i").test(landed); } catch { okHere = landed.includes(site.successUrl); }
-    if (!okHere) {
-      return { ok: false, steps, url: publicUrl(landed),
-        reason: `La connexion a abouti, mais sur ${publicUrl(landed)} au lieu de l'espace attendu pour « ${site.key} » (${site.successUrl}). C'est probablement le mauvais compte ou le mauvais espace.` };
+    try { successVerified = new RegExp(site.successUrl, "i").test(landed); } catch { successVerified = landed.includes(site.successUrl); }
+    if (!successVerified) {
+      return coded("fail.landed_elsewhere", { ok: false, steps, url: publicUrl(landed),
+        reason: `La connexion a abouti, mais sur ${publicUrl(landed)} au lieu de l'espace attendu pour « ${site.key} » (${site.successUrl}). C'est probablement le mauvais compte ou le mauvais espace.` });
     }
     steps.push("arrivé dans l'espace attendu");
   }
 
-  return {
+  return coded("ok.signed_in", {
     ok: true,
     steps,
     url: publicUrl(page.isClosed() ? "" : page.url()),
     title: page.isClosed() ? "" : await page.title().catch(() => ""),
     secondFactor: secondFactor || undefined,
-    hint,
-  };
+  }, { confidence: !submitForm ? "low" : page.isClosed() ? "low" : await signedInConfidence(page, site, { successVerified }) });
 }

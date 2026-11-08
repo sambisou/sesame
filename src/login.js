@@ -5,10 +5,12 @@ import { HOME, getSite, loadSites, saveSites, normalizeName, siteDomainFor, asse
 import { getSecret, hasSecret, setSecret, keychainAvailable, KeychainWaitingError } from "./keychain.js";
 import { logEvent } from "./journal.js";
 import { isLocked, askHuman, askAccess, askText, notify, notifyWaitingCode, channelLabel, barAlive } from "./policy.js";
-import { connect, findPage, claimSiteTab, openPage, fillLogin, detectSecondFactor, waitForSecondFactor, publicUrl, hasLoginFields, gotoLogin } from "./browser.js";
+import { connect, findPage, claimSiteTab, openPage, fillLogin, detectSecondFactor, waitForSecondFactor, publicUrl, hasLoginFields, hasPasswordField, looksSignedIn, gotoLogin, probeSession } from "./browser.js";
 import { browserMode, extensionReady, openBridgeSession, bridgeWaitCode } from "./bridge-client.js";
 import { t } from "./i18n.js";
 import { findCodeForSite, mailboxes } from "./mailbox.js";
+import { OUTCOMES, withOutcome, ensureOutcome, codeLabel } from "./outcomes.js";
+import { checkLock, recordOutcome, recordProbe, formatLocal } from "./state.js";
 
 /** Étape ajoutée en tête de `steps` quand l'extension a lâché AVANT tout envoi de secret (mode auto). */
 export const FALLBACK_STEP = "extension injoignable, repli sur le Chrome Sésame";
@@ -75,8 +77,59 @@ async function approveExtraDomain({ site, domain, base }) {
  * domaine enregistrable qui montre déjà un mot de passe, l'utilisateur est invité à l'autoriser (apprentissage
  * assisté, voir approveExtraDomain) et le remplissage reprend tout seul en cas d'accord.
  */
-export async function login({ site: siteName, submit = true, openIfMissing = true, caller = "mcp", reason = "", waitForCode = true, codeTimeoutSec = 180, readSecret = getSecret }) {
-  const site = getSite(siteName);
+export async function login(opts = {}) {
+  const site = getSite(opts.site);
+  const r = ensureOutcome(await doLogin(site, opts));
+  // Mémoire des sessions et verrou d'essais : chaque sortie est enregistrée, quelle qu'elle soit.
+  recordOrWarn(site, r, opts.caller);
+  return r;
+}
+
+/**
+ * Enregistre la sortie dans l'état (src/state.js). Un échec d'écriture n'empêche pas de répondre, mais ne
+ * reste jamais silencieux : le verrou d'essais ne se poserait pas — journal + `stateWarning` dans la réponse.
+ */
+function recordOrWarn(site, r, caller = "mcp") {
+  try { recordOutcome(site.key, r, site); }
+  catch (e) {
+    const why = String(e?.message || e).slice(0, 160);
+    logEvent({ site: site.key, action: "état", caller, result: "erreur", detail: `état non enregistré (${why}) — le verrou d'essais ne peut pas se poser` });
+    r.stateWarning = `état non enregistré (${why}) : le verrou d'essais ne se pose pas tant que ~/.sesame/state n'est pas accessible en écriture`;
+  }
+}
+
+/** Verdict + message pour un refus immédiat (jamais de secret, jamais de Chrome). */
+const refused = (code, message, extra) => withOutcome({ ok: false, message }, code, extra);
+
+/** Classe une exception de la connexion : Trousseau en attente, Chrome (connect), ou non classée. */
+function codeForError(e) {
+  if (e instanceof KeychainWaitingError) return "fail.keychain_waiting";
+  if (e?.sesameCode) return e.sesameCode;
+  return "fail.unexpected";
+}
+
+/** Code d'un résultat venu de l'extension (elle ne connaît pas la table) : déduit des champs et du motif. */
+function codeForExtensionResult(res) {
+  if (res.code && OUTCOMES[res.code]) return res.code;
+  if (res.ok) {
+    if (res.alreadySignedIn) return "ok.already_signed_in";
+    if (res.secondFactor?.pending) return "pending.second_factor";
+    return "ok.signed_in";
+  }
+  if (res.needsDomain) return "fail.domain_approval";
+  if (res.needsProvider) return "fail.provider_needed";
+  if (res.secondFactor?.pending) return "pending.second_factor";
+  const why = res.reason || "";
+  if (/captcha/i.test(why)) return "fail.captcha";
+  if (/refus|incorrect|invalide/i.test(why)) return "fail.password_rejected";
+  if (/onglet (parti|fermé)|hors (du )?périmètre/i.test(why)) return "fail.tab_left";
+  if (/aucun champ/i.test(why)) return "fail.no_form";
+  if (/mot de passe n'est pas apparu/i.test(why)) return "fail.no_password_step";
+  if (/autre compte/i.test(why)) return "fail.wrong_account";
+  return "fail.unexpected";
+}
+
+async function doLogin(site, { submit = true, openIfMissing = true, caller = "mcp", reason = "", waitForCode = true, codeTimeoutSec = 180, readSecret = getSecret }) {
   const base = { site: site.key, action: "login", caller, detail: reason || undefined };
   // Première trace dès l'entrée : si tout se bloque ensuite (Trousseau, Chrome), on sait au moins que la
   // demande est arrivée, pour qui, et pourquoi.
@@ -84,18 +137,29 @@ export async function login({ site: siteName, submit = true, openIfMissing = tru
 
   if (isLocked()) {
     logEvent({ ...base, result: "refusé", detail: "verrou global actif (sesame unlock)" });
-    return { ok: false, message: "Sésame est verrouillé (sesame unlock pour rouvrir)." };
+    return refused("fail.locked", "Sésame est verrouillé (sesame unlock pour rouvrir).");
   }
   if (site.policy === "revoked") {
     logEvent({ ...base, result: "refusé", detail: "accès révoqué pour ce site" });
-    return { ok: false, message: `Accès à « ${site.key} » révoqué par l'utilisateur. (sesame policy ${site.key} ask|always pour rouvrir)` };
+    return refused("fail.revoked", `Accès à « ${site.key} » révoqué par l'utilisateur. (sesame policy ${site.key} ask|always pour rouvrir)`);
+  }
+  // Verrou d'essais (src/state.js) : après un captcha ou un mot de passe refusé, Sésame n'insiste pas
+  // avant le lendemain matin — c'est ce qui fait bannir un compte. Vérifié AVANT la sonde et AVANT toute
+  // lecture de secret. Le chemin humain reste ouvert (sesame_open_login, sesame_wait_code, unlock-site).
+  const lk = checkLock(site);
+  if (lk.locked) {
+    const when = formatLocal(lk.until);
+    logEvent({ ...base, result: "refusé", detail: `verrou d'essais jusqu'au ${when} (dernier échec : ${lk.reason || "?"})` });
+    return refused("fail.rate_limited",
+      `Sésame n'essaie plus sur « ${site.key} » avant le ${when}${lk.reason ? ` : dernier échec « ${codeLabel(lk.reason)} »` : ""}.`,
+      { retryAfter: lk.until, human: `ouvre la page toi-même : sesame_open_login, puis sesame_wait_code si un code est demandé ; ou lève le verrou : sesame unlock-site ${site.key}` });
   }
   // Site connecté par un fournisseur d'identité : aucun secret dans le Trousseau, jamais lu. Le compte du
   // fournisseur a sa session dans le Chrome Sésame, qui est donc le seul canal (voir fillLogin).
   const viaProviderSite = isProviderSite(site);
   if (!viaProviderSite && !hasSecret(site.key)) {
     logEvent({ ...base, result: "erreur", detail: "aucun identifiant dans le Trousseau" });
-    return { ok: false, message: `Aucun identifiant enregistré pour « ${site.key} » (sesame add ${site.key}).` };
+    return refused("fail.no_secret", `Aucun identifiant enregistré pour « ${site.key} » (sesame add ${site.key}).`);
   }
 
   // Canal : l'extension dans le Chrome habituel si elle répond (mode auto/extension), sinon le Chrome Sésame.
@@ -105,47 +169,108 @@ export async function login({ site: siteName, submit = true, openIfMissing = tru
   const mode = browserMode();
   if (viaProviderSite && mode === "extension") {
     logEvent({ ...base, result: "erreur", detail: "site fournisseur incompatible avec SESAME_BROWSER=extension (la session du fournisseur est dans le Chrome Sésame)" });
-    return { ok: false, message: `« ${site.key} » se connecte par ${site.authProvider} : la session du fournisseur vit dans le Chrome Sésame, pas dans l'extension. Passe SESAME_BROWSER=auto (ou chrome-profile) pour ce site.` };
+    return refused("fail.extension", `« ${site.key} » se connecte par ${site.authProvider} : la session du fournisseur vit dans le Chrome Sésame, pas dans l'extension. Passe SESAME_BROWSER=auto (ou chrome-profile) pour ce site.`);
   }
   const viaExtension = !viaProviderSite && mode !== "chrome-profile" && await extensionReady();
   if (!viaExtension && mode === "extension") {
     logEvent({ ...base, result: "erreur", detail: "extension Chrome injoignable (SESAME_BROWSER=extension, pas de repli)" });
-    return { ok: false, message: "L'extension Sésame ne répond pas : ouvre Chrome avec l'extension Sésame activée, ou passe SESAME_BROWSER=auto pour autoriser le Chrome Sésame." };
+    return refused("fail.extension", "L'extension Sésame ne répond pas : ouvre Chrome avec l'extension Sésame activée, ou passe SESAME_BROWSER=auto pour autoriser le Chrome Sésame.");
   }
   let channel = viaExtension ? "extension" : "chrome-profile";
 
-  if (site.policy === "ask") {
-    const viaBar = barAlive();
-    const ans = await askAccess({
-      kind: "access", site: site.key, domain: site.domain, caller, reason: reason || "", channel: channelLabel(channel), offerAlways: true,
-      title: t("dlg_access_title"),
-      message: t("dlg_access_message", {
-        caller, site: site.key, domain: site.domain,
-        reasonLine: reason ? `${t("reason_label")} : ${reason}\n\n` : "",
-        channel: channelLabel(channel),
-      }),
-    });
-    if (!ans.allowed) {
-      logEvent({ ...base, result: "refusé", detail: ans.timedOut ? "sans réponse de l'utilisateur (délai écoulé)" : "refusé par l'utilisateur" });
-      return { ok: false, message: ans.timedOut ? "L'utilisateur n'a pas répondu à la demande d'accès (délai écoulé)." : "L'utilisateur a refusé la demande d'accès." };
-    }
-    logEvent({ ...base, result: "autorisé", detail: `validé par l'utilisateur (${viaBar ? "fenêtre Sésame" : "dialogue"}, ${channel})` });
-    // « Ne plus me demander pour ce site » : la politique passe à always, à partir de la prochaine fois.
-    if (ans.always) {
-      try {
-        const sites = loadSites();
-        if (sites[site.key]) { sites[site.key].policy = "always"; saveSites(sites); }
-        logEvent({ ...base, action: "policy", result: "ok", detail: "always (coché dans la fenêtre d'accès)" });
-      } catch {}
-    }
-  } else {
-    logEvent({ ...base, result: "autorisé", detail: `politique always (${channel})` });
-  }
-
-  let browser;
+  const loginUrl = site.loginUrl || `https://${site.domain}/`;
+  const onChrome = d => logEvent({ ...base, action: "chrome", result: d.result || "étape", detail: d.detail });
+  const connectChrome = async () => {
+    try { return await connect({ onEvent: onChrome }); }
+    catch (e) { e.sesameCode = "fail.browser"; throw e; }
+  };
+  let browser = null;
   let secret = null;
   const steps = [];
+  const probeEnabled = site.session?.probe !== false;
+  let probeRes = null;   // { state, page, url, reason, opened, aliveSel, challenge }
+  const codeActor = () => (mailboxes().length ? "sesame" : "user");
+
+  /** Sonde la session sur le Chrome Sésame (aucun secret lu). Renvoie une réponse à rendre tout de suite, ou null pour continuer. */
+  const runProbe = async () => {
+    const existing = await claimSiteTab(browser, site, { onEvent: onChrome });
+    if (!existing && !openIfMissing) {
+      logEvent({ ...base, result: "échec", detail: "aucun onglet correspondant" });
+      return refused("fail.no_form", `Aucun onglet Chrome ouvert sur ${site.domain}.`);
+    }
+    const pr = await probeSession(browser, site, { onEvent: d => logEvent({ ...base, action: "sonde", result: d.result, detail: d.detail }) });
+    pr.opened = !existing;
+    probeRes = pr;
+    try { recordProbe(site.key, pr.state, pr.url); } catch {}
+    if (pr.state === "alive") {
+      // Après un repli extension → Chrome Sésame, le Trousseau a déjà été lu (rien n'a été saisi) : le dire tel quel.
+      const lu = secret ? "secret déjà lu par l'extension, rien saisi" : "aucun secret lu";
+      logEvent({ ...base, result: "réussi", detail: `session vivante (sonde), ${lu}` });
+      touchLastUsed(site.key);
+      return withOutcome({
+        ok: true, alreadySignedIn: true, probe: true,
+        message: `Session déjà ouverte sur « ${site.key} » (vérifiée par la sonde, ${secret ? "identifiant lu par l'extension mais rien saisi" : "aucun identifiant lu"}) : rien à remplir, tu peux utiliser le site.`,
+        steps: [...steps, `session vivante (sonde), ${lu}`], url: pr.url, opened: pr.opened,
+      }, "ok.already_signed_in", { confidence: pr.aliveSel ? "high" : "medium" });
+    }
+    if (pr.state === "challenge" && pr.challenge === "code") {
+      // Un code est attendu sur l'onglet : rien à remplir, pas de navigation — c'est à sesame_wait_code de reprendre.
+      logEvent({ ...base, result: "en attente", detail: `sonde : ${pr.reason} — aucun secret lu, appeler sesame_wait_code` });
+      return withOutcome({
+        ok: false, probe: true, message: `L'onglet de « ${site.key} » attend un code (${pr.secondFactor?.detail || "2e facteur"}) : rien à remplir. Appelle sesame_wait_code.`,
+        steps: [...steps, `sonde : ${pr.reason}`], url: pr.url, secondFactor: { pending: true, ...(pr.secondFactor || {}) }, opened: pr.opened,
+      }, "pending.second_factor", { actor: codeActor() });
+    }
+    if (pr.state === "challenge" && pr.challenge === "captcha") {
+      // Observation passive : rien lu, rien soumis. `probe: true` dit à recordOutcome de ne PAS compter cet
+      // essai pour le verrou (qui mesure les tentatives réelles, celles qui font bannir un compte).
+      logEvent({ ...base, result: "échec", detail: `sonde : ${pr.reason} — aucun secret lu, rien soumis (ne compte pas pour le verrou d'essais)` });
+      return withOutcome({
+        ok: false, probe: true, message: `Un captcha ou une vérification humaine est affiché sur l'onglet de « ${site.key} » : Sésame n'y touche pas, rien n'a été saisi. L'utilisateur doit passer cette étape lui-même dans le Chrome Sésame.`,
+        steps: [...steps, `sonde : ${pr.reason}`], url: pr.url, opened: pr.opened,
+      }, "fail.captcha");
+    }
+    return null;
+  };
+
   try {
+    // Sonde AVANT la demande d'accès et AVANT toute lecture de secret : si la session est vivante, on ne
+    // dérange personne et on ne lit rien. Sur le canal Chrome Sésame seulement (l'extension ne sonde pas).
+    if (channel === "chrome-profile" && probeEnabled) {
+      logEvent({ ...base, result: "étape", detail: "connexion au Chrome Sésame — sonde de session" });
+      browser = await connectChrome();
+      const early = await runProbe();
+      if (early) return early;
+    }
+
+    if (site.policy === "ask") {
+      const viaBar = barAlive();
+      const ans = await askAccess({
+        kind: "access", site: site.key, domain: site.domain, caller, reason: reason || "", channel: channelLabel(channel), offerAlways: true,
+        title: t("dlg_access_title"),
+        message: t("dlg_access_message", {
+          caller, site: site.key, domain: site.domain,
+          reasonLine: reason ? `${t("reason_label")} : ${reason}\n\n` : "",
+          channel: channelLabel(channel),
+        }),
+      });
+      if (!ans.allowed) {
+        logEvent({ ...base, result: "refusé", detail: ans.timedOut ? "sans réponse de l'utilisateur (délai écoulé)" : "refusé par l'utilisateur" });
+        return refused("fail.access_refused", ans.timedOut ? "L'utilisateur n'a pas répondu à la demande d'accès (délai écoulé)." : "L'utilisateur a refusé la demande d'accès.");
+      }
+      logEvent({ ...base, result: "autorisé", detail: `validé par l'utilisateur (${viaBar ? "fenêtre Sésame" : "dialogue"}, ${channel})` });
+      // « Ne plus me demander pour ce site » : la politique passe à always, à partir de la prochaine fois.
+      if (ans.always) {
+        try {
+          const sites = loadSites();
+          if (sites[site.key]) { sites[site.key].policy = "always"; saveSites(sites); }
+          logEvent({ ...base, action: "policy", result: "ok", detail: "always (coché dans la fenêtre d'accès)" });
+        } catch {}
+      }
+    } else {
+      logEvent({ ...base, result: "autorisé", detail: `politique always (${channel})` });
+    }
+
     let res = null;
     if (viaExtension) {
       // 1er temps : l'extension trouve l'onglet et le formulaire. Aucun secret n'a encore été lu.
@@ -153,7 +278,7 @@ export async function login({ site: siteName, submit = true, openIfMissing = tru
       let fail = null; // { cause, code } d'un échec de canal, avant ou après l'envoi du secret
       if (prep.ready && !prep.ready.ok) {
         logEvent({ ...base, channel, result: "échec", detail: prep.ready.reason });
-        return { ok: false, message: prep.ready.reason, steps: prep.ready.steps, url: prep.ready.url, channel };
+        return withOutcome({ ok: false, message: prep.ready.reason, steps: prep.ready.steps, url: prep.ready.url, channel }, "fail.no_form");
       }
       if (prep.ready) {
         // 2e temps : le Trousseau n'est lu que maintenant, un formulaire du bon domaine ayant été vu.
@@ -181,7 +306,7 @@ export async function login({ site: siteName, submit = true, openIfMissing = tru
                 } else if (r2.code === "sent") {
                   logEvent({ ...base, channel, result: "incertain", detail: `secret transmis à l'extension sans réponse (reprise après nouveau domaine) : ${r2.cause} (pas de repli)` });
                   notify("Sésame", t("notif_ext_no_response", { site: site.key }));
-                  return { ok: false, uncertain: true, message: `${UNSURE_MESSAGE} (${r2.cause})`, steps: priorSteps, url: prep2.ready.url, channel };
+                  return withOutcome({ ok: false, uncertain: true, message: `${UNSURE_MESSAGE} (${r2.cause})`, steps: priorSteps, url: prep2.ready.url, channel }, "fail.uncertain");
                 }
                 // sinon : échec de canal à la reprise — on garde `res` (l'échec initial) tel quel, sans repli ici.
               }
@@ -191,7 +316,7 @@ export async function login({ site: siteName, submit = true, openIfMissing = tru
           // Le secret est parti et la réponse n'est pas venue : le formulaire a peut-être été soumis. Jamais de repli.
           logEvent({ ...base, channel, result: "incertain", detail: `secret transmis à l'extension sans réponse : ${r.cause} (pas de repli)` });
           notify("Sésame", t("notif_ext_no_response", { site: site.key }));
-          return { ok: false, uncertain: true, message: `${UNSURE_MESSAGE} (${r.cause})`, steps: prep.ready.steps, url: prep.ready.url, channel };
+          return withOutcome({ ok: false, uncertain: true, message: `${UNSURE_MESSAGE} (${r.cause})`, steps: prep.ready.steps, url: prep.ready.url, channel }, "fail.uncertain");
         } else {
           fail = r;
         }
@@ -201,11 +326,11 @@ export async function login({ site: siteName, submit = true, openIfMissing = tru
       if (fail) {
         if (fail.code === "unauthenticated") {
           logEvent({ ...base, channel, result: "refusé", detail: `${fail.cause} (rien n'a été envoyé, pas de repli)` });
-          return { ok: false, message: `Pont Sésame non authentifié : ${fail.cause}. Un autre processus occupe peut-être ~/.sesame/bridge.sock. Rien n'a été envoyé ; aucun repli. Relance Chrome (ou ferme ce processus), puis vérifie avec sesame doctor.` };
+          return withOutcome({ ok: false, message: `Pont Sésame non authentifié : ${fail.cause}. Un autre processus occupe peut-être ~/.sesame/bridge.sock. Rien n'a été envoyé ; aucun repli. Relance Chrome (ou ferme ce processus), puis vérifie avec sesame doctor.` }, "fail.extension");
         }
         if (mode === "extension") {
           logEvent({ ...base, channel, result: "erreur", detail: `extension Chrome : ${fail.cause} (SESAME_BROWSER=extension, pas de repli)` });
-          return { ok: false, message: `L'extension Sésame n'a pas répondu (${fail.cause}). Rien n'a été envoyé : le formulaire n'a pas été rempli.` };
+          return withOutcome({ ok: false, message: `L'extension Sésame n'a pas répondu (${fail.cause}). Rien n'a été envoyé : le formulaire n'a pas été rempli.` }, "fail.extension");
         }
         // Mode auto, et rien n'a été envoyé : on se replie sur le Chrome à profil dédié, et on le dit.
         logEvent({ ...base, channel, result: "erreur", detail: `${FALLBACK_STEP} (${fail.cause})` });
@@ -215,27 +340,44 @@ export async function login({ site: siteName, submit = true, openIfMissing = tru
     }
 
     if (!res) {
-      logEvent({ ...base, result: "étape", detail: "connexion au Chrome Sésame" });
-      const onChrome = d => logEvent({ ...base, action: "chrome", result: d.result || "étape", detail: d.detail });
-      browser = await connect({ onEvent: onChrome });
-      const loginUrl = site.loginUrl || `https://${site.domain}/`;
-      // Un seul onglet par site : on reprend celui du site (les doublons éventuels sont fermés).
-      let page = await claimSiteTab(browser, site, { onEvent: onChrome });
+      if (!browser) {
+        logEvent({ ...base, result: "étape", detail: "connexion au Chrome Sésame" });
+        browser = await connectChrome();
+      }
+      let page = null;
       let opened = false;
-      if (!page) {
-        if (!openIfMissing) {
-          logEvent({ ...base, result: "échec", detail: "aucun onglet correspondant" });
-          return { ok: false, message: `Aucun onglet Chrome ouvert sur ${site.domain}.`, steps: steps.length ? steps : undefined };
+      if (probeEnabled && !probeRes) {
+        // Repli de l'extension vers le Chrome Sésame : la sonde n'a pas encore eu lieu, elle passe maintenant.
+        const early = await runProbe();
+        if (early) return early;
+      }
+      if (probeRes) {
+        page = probeRes.page;
+        opened = !!probeRes.opened;
+        if (!page || page.isClosed()) {
+          page = await openPage(browser, loginUrl);
+          opened = true;
+        } else if (probeRes.state !== "challenge" && !(await hasLoginFields(page, site))) {
+          // Session morte ou indéterminée et aucun formulaire : on RAMÈNE cet onglet sur la page de connexion
+          // (jamais un second onglet — un seul onglet par site).
+          logEvent({ ...base, result: "étape", detail: `sonde « ${probeRes.state} » sans formulaire — navigation vers la page de connexion, dans ce même onglet` });
+          await gotoLogin(page, loginUrl, site);
         }
-        logEvent({ ...base, result: "étape", detail: "aucun onglet du site — ouverture de la page de connexion" });
-        page = await openPage(browser, loginUrl);
-        opened = true;
-      } else if (!(await hasLoginFields(page, site))) {
-        // Onglet du site sans formulaire (session déjà ouverte, tableau de bord, page de déconnexion) : on
-        // RAMÈNE cet onglet sur la page de connexion. Ouvrir un second onglet en laissait un de plus à
-        // chaque connexion — c'est ce qui encombrait le Chrome Sésame.
-        logEvent({ ...base, result: "étape", detail: "onglet du site sans formulaire — retour sur la page de connexion dans ce même onglet" });
-        await gotoLogin(page, loginUrl, site);
+      } else {
+        // Sonde désactivée pour ce site (session.probe: false) : chemin historique.
+        page = await claimSiteTab(browser, site, { onEvent: onChrome });
+        if (!page) {
+          if (!openIfMissing) {
+            logEvent({ ...base, result: "échec", detail: "aucun onglet correspondant" });
+            return withOutcome({ ok: false, message: `Aucun onglet Chrome ouvert sur ${site.domain}.`, steps: steps.length ? steps : undefined }, "fail.no_form");
+          }
+          logEvent({ ...base, result: "étape", detail: "aucun onglet du site — ouverture de la page de connexion" });
+          page = await openPage(browser, loginUrl);
+          opened = true;
+        } else if (!(await hasLoginFields(page, site))) {
+          logEvent({ ...base, result: "étape", detail: "onglet du site sans formulaire — retour sur la page de connexion dans ce même onglet" });
+          await gotoLogin(page, loginUrl, site);
+        }
       }
       if (viaProviderSite) {
         // Aucun secret : le compte à choisir chez le fournisseur n'est qu'une adresse affichée, pas un identifiant à taper.
@@ -285,27 +427,48 @@ export async function login({ site: siteName, submit = true, openIfMissing = tru
     if (steps.length) res.steps = [...steps, ...(res.steps || [])];
     const ev = channel === "extension" ? { ...base, channel } : base;
 
-    if (res.secondFactor) {
-      logEvent({ ...ev, action: "2fa", result: res.secondFactor.pending ? "en attente" : "réussi",
-        detail: res.secondFactor.pending ? "code non saisi (délai dépassé ou attente désactivée)" : "code saisi par l'utilisateur, le site l'a accepté" });
+    // Verdict : fillLogin pose déjà son code ; l'extension, non (déduit du résultat).
+    const code = codeForExtensionResult(res);
+    const keep = {};
+    if (res.code === code) { if (res.actor) keep.actor = res.actor; if (res.confidence) keep.confidence = res.confidence; }
+    const r = withOutcome(res, code, keep);
+    const common = {
+      steps: r.steps, url: r.url, title: r.title, secondFactor: r.secondFactor, hint: r.hint, opened: r.opened,
+      channel: channel === "extension" ? channel : undefined,
+      outcome: r.outcome, code: r.code, retry: r.retry, actor: r.actor, confidence: r.confidence, errorText: r.errorText,
+      human: r.human, retryAfter: r.retryAfter,
+    };
+
+    if (r.secondFactor) {
+      logEvent({ ...ev, action: "2fa", result: r.secondFactor.pending ? "en attente" : "réussi",
+        detail: r.secondFactor.pending ? "code non saisi (délai dépassé ou attente désactivée)" : "code saisi par l'utilisateur, le site l'a accepté" });
     }
-    if (!res.ok) {
-      logEvent({ ...ev, result: "échec", detail: res.reason });
-      return { ok: false, message: res.reason, steps: res.steps, url: res.url, secondFactor: res.secondFactor, needsDomain: res.needsDomain, needsProvider: res.needsProvider, opened: res.opened, channel: channel === "extension" ? channel : undefined };
+    if (r.outcome === "fail") {
+      logEvent({ ...ev, result: "échec", detail: `${r.code} — ${r.reason}` });
+      return { ok: false, message: r.reason, needsDomain: r.needsDomain, needsProvider: r.needsProvider, ...common };
     }
-    const certain = !res.hint && !res.secondFactor?.pending;
-    logEvent({ ...ev, result: certain ? "réussi" : "incertain", detail: `${res.steps.join(", ")}${res.hint ? " — " + res.hint : ""} → ${res.url}` });
-    notify("Sésame", certain ? t("notif_login_filled", { site: site.key, caller }) : t("notif_login_check", { site: site.key, hint: res.hint || "code attendu" }));
-    if (certain) touchLastUsed(site.key);
-    return { ok: true, alreadySignedIn: res.alreadySignedIn || undefined, viaProvider: res.viaProvider || undefined, message: res.viaProvider ? `Connecté à « ${site.key} » par ${res.viaProvider} : Sésame a cliqué le bouton, la session du fournisseur a fait le reste.` : res.alreadySignedIn ? `Session déjà ouverte sur « ${site.key} » : rien à remplir, tu peux utiliser le site.` : res.secondFactor?.pending ? `Identifiants remplis sur « ${site.key} », le site attend un code de l'utilisateur.` : `Identifiants remplis sur « ${site.key} ».`, steps: res.steps, url: res.url, title: res.title, secondFactor: res.secondFactor, hint: res.hint, opened: res.opened, channel: channel === "extension" ? channel : undefined };
+    if (r.outcome === "pending") {
+      logEvent({ ...ev, result: "en attente", detail: `${r.code} — ${(r.steps || []).join(", ")}${r.reason ? " — " + r.reason : ""} → ${r.url}` });
+      notify("Sésame", t("notif_login_check", { site: site.key, hint: r.hint || r.reason || "code attendu" }));
+      return { ok: false, message: r.reason || `Identifiants remplis sur « ${site.key} », le site attend un code de l'utilisateur.`, ...common };
+    }
+    logEvent({ ...ev, result: "réussi", detail: `${r.code}${r.confidence ? ` (${r.confidence})` : ""} — ${(r.steps || []).join(", ")} → ${r.url}` });
+    notify("Sésame", t("notif_login_filled", { site: site.key, caller }));
+    touchLastUsed(site.key);
+    const message = r.viaProvider ? `Connecté à « ${site.key} » par ${r.viaProvider} : Sésame a cliqué le bouton, la session du fournisseur a fait le reste.`
+      : r.alreadySignedIn ? `Session déjà ouverte sur « ${site.key} » : rien à remplir, tu peux utiliser le site.`
+      : r.code === "ok.signed_in_after_step1" ? `Connecté à « ${site.key} » dès l'identifiant : le site n'a pas demandé le mot de passe (session ou identité déjà connue).`
+      : `Identifiants remplis sur « ${site.key} ».`;
+    return { ok: true, alreadySignedIn: r.alreadySignedIn || undefined, viaProvider: r.viaProvider || undefined, message, ...common };
   } catch (e) {
     const msg = sanitize(e.message);
-    if (e instanceof KeychainWaitingError) {
+    const code = codeForError(e);
+    if (code === "fail.keychain_waiting") {
       logEvent({ ...base, result: "échec", detail: `en attente du Trousseau : ${msg}` });
-      return { ok: false, status: "attente_trousseau", message: msg, hint: "Le mot de passe de ce site est lié à une ancienne signature de Sésame. L'utilisateur doit répondre à la fenêtre du Trousseau (« Toujours autoriser ») ou cliquer « Re-migrer » dans le menu Sésame ; ensuite la lecture sera silencieuse. Ne relance pas la connexion avant qu'il ait confirmé.", steps: steps.length ? steps : undefined };
+      return withOutcome({ ok: false, status: "attente_trousseau", message: msg, hint: "Le mot de passe de ce site est lié à une ancienne signature de Sésame. L'utilisateur doit répondre à la fenêtre du Trousseau (« Toujours autoriser ») ou cliquer « Re-migrer » dans le menu Sésame ; ensuite la lecture sera silencieuse. Ne relance pas la connexion avant qu'il ait confirmé.", steps: steps.length ? steps : undefined }, code);
     }
-    logEvent({ ...base, result: "erreur", detail: msg });
-    return { ok: false, message: msg, steps: steps.length ? steps : undefined };
+    logEvent({ ...base, result: "erreur", detail: `${code} — ${msg}` });
+    return withOutcome({ ok: false, message: msg, steps: steps.length ? steps : undefined }, code);
   } finally {
     if (secret) { secret.password = ""; secret.username = ""; }
     // connectOverCDP : fermer la connexion sans fermer Chrome.
@@ -417,26 +580,65 @@ export async function openLogin({ site: siteName, caller = "mcp" }) {
   const site = getSite(siteName);
   if (isLocked()) {
     logEvent({ site: site.key, action: "open_login", caller, result: "refusé", detail: "verrou global actif" });
-    return { ok: false, message: "Sésame est verrouillé (sesame unlock, ou l'interrupteur Verrou de l'app)." };
+    return refused("fail.locked", "Sésame est verrouillé (sesame unlock, ou l'interrupteur Verrou de l'app).");
   }
   if (site.policy === "revoked") {
     logEvent({ site: site.key, action: "open_login", caller, result: "refusé", detail: "accès révoqué pour ce site" });
-    return { ok: false, message: `Accès à « ${site.key} » coupé par l'utilisateur.` };
+    return refused("fail.revoked", `Accès à « ${site.key} » coupé par l'utilisateur.`);
   }
   const url = site.loginUrl || `https://${site.domain}/`;
   const base = { site: site.key, action: "open_login", caller };
   let browser;
   try {
-    browser = await connect({ onEvent: d => logEvent({ ...base, action: "chrome", result: d.result || "étape", detail: d.detail }) });
+    try { browser = await connect({ onEvent: d => logEvent({ ...base, action: "chrome", result: d.result || "étape", detail: d.detail }) }); }
+    catch (e) { e.sesameCode = "fail.browser"; throw e; }
     const existing = await claimSiteTab(browser, site, { onEvent: d => logEvent({ ...base, action: "chrome", result: d.result || "étape", detail: d.detail }) });
     const page = existing || await openPage(browser, url);
     if (existing) await page.bringToFront().catch(() => {});
     logEvent({ site: site.key, action: "open_login", caller, result: "ok", detail: publicUrl(page.url()) });
-    return { ok: true, url: publicUrl(page.url()), reused: !!existing };
+    return withOutcome({ ok: true, url: publicUrl(page.url()), reused: !!existing }, "ok.opened");
   } catch (e) {
     const msg = sanitize(e.message);
     logEvent({ site: site.key, action: "open_login", caller, result: "erreur", detail: msg });
-    return { ok: false, message: msg };
+    return refused(codeForError(e), msg);
+  } finally {
+    await browser?.close().catch(() => {});
+  }
+}
+
+/**
+ * Sonde seule (op « sonder » du moteur de l'atelier, pour éviter Face ID quand la session est vivante) :
+ * connexion CDP, probeSession, journal `action: "sonde"`, état, fermeture de la connexion CDP sans fermer
+ * Chrome. Aucun secret lu, aucun formulaire rempli. Ne tient compte ni du verrou d'essais ni de la politique
+ * « ask » (rien n'est saisi) ; le verrou global et « revoked », si.
+ * Renvoie { ok: true, state, url, outcome: "ok", code: alive → ok.already_signed_in, sinon ok.probed }.
+ */
+export async function probe({ site: siteName, caller = "mcp" }) {
+  const site = getSite(siteName);
+  const base = { site: site.key, action: "sonde", caller };
+  if (isLocked()) {
+    logEvent({ ...base, result: "refusé", detail: "verrou global actif" });
+    return refused("fail.locked", "Sésame est verrouillé (sesame unlock, ou l'interrupteur Verrou de l'app).");
+  }
+  if (site.policy === "revoked") {
+    logEvent({ ...base, result: "refusé", detail: "accès révoqué pour ce site" });
+    return refused("fail.revoked", `Accès à « ${site.key} » coupé par l'utilisateur.`);
+  }
+  let browser;
+  try {
+    try { browser = await connect({ onEvent: d => logEvent({ ...base, action: "chrome", result: d.result || "étape", detail: d.detail }) }); }
+    catch (e) { e.sesameCode = "fail.browser"; throw e; }
+    const pr = await probeSession(browser, site, { onEvent: d => logEvent({ ...base, result: d.result, detail: d.detail }) });
+    try { recordProbe(site.key, pr.state, pr.url); } catch {}
+    if (pr.state === "alive") touchLastUsed(site.key);
+    const code = pr.state === "alive" ? "ok.already_signed_in" : "ok.probed";
+    return withOutcome({ ok: true, state: pr.state, url: pr.url, reason: pr.reason, challenge: pr.challenge, alreadySignedIn: pr.state === "alive" || undefined, probe: true,
+      message: pr.state === "alive" ? `Session vivante sur « ${site.key} » (aucun secret lu).` : `Sonde « ${site.key} » : ${pr.state} — ${pr.reason}.` },
+      code, pr.state === "alive" ? { confidence: pr.aliveSel ? "high" : "medium" } : {});
+  } catch (e) {
+    const msg = sanitize(e.message);
+    logEvent({ ...base, result: "erreur", detail: msg });
+    return refused(codeForError(e), msg);
   } finally {
     await browser?.close().catch(() => {});
   }
@@ -445,25 +647,36 @@ export async function openLogin({ site: siteName, caller = "mcp" }) {
 /**
  * Reprend l'attente du code (2e facteur) sur l'onglet du site, sans rien remplir.
  * Utile quand sesame_login a rendu la main avant que l'utilisateur ait saisi le code.
+ * Verdicts : ok.code_accepted (code saisi et accepté), ok.no_code_pending (ni code ni formulaire ; confidence
+ * medium si la page semble connectée, low sinon), fail.form_still_visible (le formulaire identifiant/mot de
+ * passe est affiché : appeler sesame_login), pending.second_factor(_no_field), fail.code_rejected, fail.tab_left.
+ * Le verrou d'essais ne s'applique pas ici (rien n'est saisi par Sésame).
  */
 export async function waitCode({ site: siteName, timeoutSec = 180, caller = "mcp" }) {
   const site = getSite(siteName);
+  const r = ensureOutcome(await doWaitCode(site, { timeoutSec, caller }), "ok.code_accepted");
+  recordOrWarn(site, r, caller);
+  return r;
+}
+
+async function doWaitCode(site, { timeoutSec = 180, caller = "mcp" }) {
   if (isLocked()) {
     logEvent({ site: site.key, action: "2fa", caller, result: "refusé", detail: "verrou global actif" });
-    return { ok: false, message: "Sésame est verrouillé (sesame unlock, ou l'interrupteur Verrou de l'app)." };
+    return refused("fail.locked", "Sésame est verrouillé (sesame unlock, ou l'interrupteur Verrou de l'app).");
   }
   if (site.policy === "revoked") {
     logEvent({ site: site.key, action: "2fa", caller, result: "refusé", detail: "accès révoqué pour ce site" });
-    return { ok: false, message: `Accès à « ${site.key} » coupé par l'utilisateur.` };
+    return refused("fail.revoked", `Accès à « ${site.key} » coupé par l'utilisateur.`);
   }
   const base = { site: site.key, action: "2fa", caller };
+  const codeActor = mailboxes().length ? "sesame" : "user";
 
   // Par l'extension Chrome si elle répond (voir login) ; sinon, ou si elle lâche en mode auto, le Chrome Sésame.
   const mode = browserMode();
   const viaExtension = mode !== "chrome-profile" && await extensionReady();
   if (!viaExtension && mode === "extension") {
     logEvent({ ...base, result: "erreur", detail: "extension Chrome injoignable (SESAME_BROWSER=extension, pas de repli)" });
-    return { ok: false, message: "L'extension Sésame ne répond pas : ouvre Chrome avec l'extension Sésame activée, ou passe SESAME_BROWSER=auto." };
+    return refused("fail.extension", "L'extension Sésame ne répond pas : ouvre Chrome avec l'extension Sésame activée, ou passe SESAME_BROWSER=auto.");
   }
   const steps = [];
   if (viaExtension) {
@@ -476,7 +689,7 @@ export async function waitCode({ site: siteName, timeoutSec = 180, caller = "mcp
       const cause = sanitize(e.message);
       if (mode === "extension") {
         logEvent({ ...ev, result: "erreur", detail: `extension Chrome : ${cause} (SESAME_BROWSER=extension, pas de repli)` });
-        return { ok: false, message: `L'extension Sésame n'a pas répondu (${cause}).` };
+        return refused("fail.extension", `L'extension Sésame n'a pas répondu (${cause}).`);
       }
       logEvent({ ...ev, result: "erreur", detail: `${FALLBACK_STEP} (${cause})` });
       steps.push(FALLBACK_STEP);
@@ -485,25 +698,30 @@ export async function waitCode({ site: siteName, timeoutSec = 180, caller = "mcp
       if (r.ok && r.secondFactor && !r.secondFactor.pending) {
         logEvent({ ...ev, result: "réussi", detail: `code saisi par l'utilisateur → ${r.url}` });
         touchLastUsed(site.key);
-        return { ok: true, message: `Code saisi par l'utilisateur, connexion poursuivie sur « ${site.key} ».`, url: r.url, title: r.title, secondFactor: r.secondFactor, steps: r.steps, channel: "extension" };
+        return withOutcome({ ok: true, message: `Code saisi par l'utilisateur, connexion poursuivie sur « ${site.key} ».`, url: r.url, title: r.title, secondFactor: r.secondFactor, steps: r.steps, channel: "extension" }, "ok.code_accepted");
       }
       if (r.ok) {
         logEvent({ ...ev, result: "ok", detail: "aucun code demandé sur cet onglet" });
-        return { ok: true, message: "Aucun code demandé sur cet onglet (la connexion est peut-être déjà passée).", url: r.url, title: r.title, steps: r.steps, hint: r.hint, channel: "extension" };
+        return withOutcome({ ok: true, message: "Aucun code demandé sur cet onglet (la connexion est peut-être déjà passée).", url: r.url, title: r.title, steps: r.steps, hint: r.hint, channel: "extension" }, "ok.no_code_pending", { confidence: "low" });
       }
       const pending = !!r.secondFactor?.pending;
       logEvent({ ...ev, result: pending ? "en attente" : "échec", detail: r.reason });
-      return { ok: false, message: pending ? `${r.reason} Rappelle sesame_wait_code quand l'utilisateur est prêt.` : `Attente du code interrompue : ${r.reason}.`, url: r.url, secondFactor: r.secondFactor, steps: r.steps, hint: r.hint, channel: "extension" };
+      const code = pending ? (r.secondFactor?.kind === "texte-seul" ? "pending.second_factor_no_field" : "pending.second_factor")
+        : /retour au formulaire mot de passe/.test(r.reason || "") ? "fail.code_rejected"
+        : /onglet|fermé|parti/.test(r.reason || "") ? "fail.tab_left" : "fail.unexpected";
+      return withOutcome({ ok: false, message: pending ? `${r.reason} Rappelle sesame_wait_code quand l'utilisateur est prêt.` : `Attente du code interrompue : ${r.reason}.`, url: r.url, secondFactor: r.secondFactor, steps: r.steps, hint: r.hint, channel: "extension" },
+        code, code === "pending.second_factor" ? { actor: codeActor } : {});
     }
   }
 
   let browser;
   try {
-    browser = await connect({ onEvent: d => logEvent({ ...base, action: "chrome", result: d.result || "étape", detail: d.detail }) });
+    try { browser = await connect({ onEvent: d => logEvent({ ...base, action: "chrome", result: d.result || "étape", detail: d.detail }) }); }
+    catch (e) { e.sesameCode = "fail.browser"; throw e; }
     const page = await findPage(browser, site);
     if (!page) {
       logEvent({ ...base, result: "échec", detail: "aucun onglet du site" });
-      return { ok: false, message: `Aucun onglet Chrome ouvert sur ${site.domain}.`, steps: steps.length ? steps : undefined };
+      return withOutcome({ ok: false, message: `Aucun onglet Chrome ouvert sur ${site.domain}.`, steps: steps.length ? steps : undefined }, "fail.tab_left");
     }
     await page.bringToFront().catch(() => {});
     const deadline = Date.now() + timeoutSec * 1000;
@@ -516,13 +734,21 @@ export async function waitCode({ site: siteName, timeoutSec = 180, caller = "mcp
       sf = await detectSecondFactor(page, site);
     }
     if (!sf) {
-      const stillPassword = !page.isClosed() && /password/i.test(await page.content().catch(() => "")) ? "" : "";
-      logEvent({ ...base, result: "ok", detail: "aucun code demandé sur cet onglet" });
-      return { ok: true, message: `Aucun code demandé sur cet onglet (la connexion est peut-être déjà passée).${stillPassword}`, url: publicUrl(page.url()), title: await page.title().catch(() => "") };
+      const url = publicUrl(page.isClosed() ? "" : page.url());
+      const title = page.isClosed() ? "" : await page.title().catch(() => "");
+      // Aucun code attendu, mais le formulaire identifiant/mot de passe est affiché : rien à attendre ici,
+      // c'est sesame_login qu'il faut appeler.
+      if (!page.isClosed() && await hasPasswordField(page, site)) {
+        logEvent({ ...base, result: "échec", detail: "aucun code attendu : le formulaire de connexion est affiché" });
+        return withOutcome({ ok: false, message: `Aucun code n'est attendu sur « ${site.key} » : le formulaire identifiant/mot de passe est affiché. Appelle sesame_login.`, url, title, steps: steps.length ? steps : undefined }, "fail.form_still_visible");
+      }
+      const signed = !page.isClosed() && await looksSignedIn(page, site);
+      logEvent({ ...base, result: "ok", detail: `aucun code demandé sur cet onglet${signed ? " — page connectée" : ""}` });
+      return withOutcome({ ok: true, message: `Aucun code demandé sur cet onglet (la connexion ${signed ? "semble passée" : "est peut-être déjà passée"}).`, url, title, steps: steps.length ? steps : undefined }, "ok.no_code_pending", { confidence: signed ? "medium" : "low" });
     }
     if (sf.kind === "texte-seul") {
       logEvent({ ...base, result: "en attente", detail: `page évoquant un code sans champ (${sf.detail}) après ${timeoutSec} s` });
-      return { ok: false, message: `La page évoque un 2e facteur sans champ de saisie (${sf.detail}) : l'utilisateur doit d'abord choisir la méthode ou valider sur son téléphone. Rappelle sesame_wait_code ensuite.`, secondFactor: { pending: true, ...sf } };
+      return withOutcome({ ok: false, message: `La page évoque un 2e facteur sans champ de saisie (${sf.detail}) : l'utilisateur doit d'abord choisir la méthode ou valider sur son téléphone. Rappelle sesame_wait_code ensuite.`, url: publicUrl(page.url()), secondFactor: { pending: true, ...sf } }, "pending.second_factor_no_field");
     }
     logEvent({ ...base, result: "attente", detail: `reprise de l'attente (${sf.detail})` });
     notifyWaitingCode(site.key, { detail: sf.detail, timeoutSec, channel: "chrome-profile" });
@@ -537,15 +763,17 @@ export async function waitCode({ site: siteName, timeoutSec = 180, caller = "mcp
     if (!w.done) {
       const pending = w.reason === "délai dépassé";
       logEvent({ ...base, result: pending ? "en attente" : "échec", detail: pending ? `code non saisi après ${timeoutSec} s` : w.reason });
-      return { ok: false, message: pending ? `L'utilisateur n'a pas saisi le code dans le délai (${timeoutSec} s). Rappelle sesame_wait_code quand il est prêt.` : `Attente du code interrompue : ${w.reason}.`, secondFactor: { pending, ...sf } };
+      const code = pending ? "pending.second_factor" : /retour au formulaire mot de passe/.test(w.reason || "") ? "fail.code_rejected" : "fail.tab_left";
+      return withOutcome({ ok: false, message: pending ? `L'utilisateur n'a pas saisi le code dans le délai (${timeoutSec} s). Rappelle sesame_wait_code quand il est prêt.` : `Attente du code interrompue : ${w.reason}.`, url: publicUrl(page.isClosed() ? "" : page.url()), secondFactor: { pending, ...sf } },
+        code, pending ? { actor: codeActor } : {});
     }
-    logEvent({ ...base, result: "réussi", detail: `code saisi par l'utilisateur (${w.elapsedSec} s) → ${publicUrl(page.url())}` });
+    logEvent({ ...base, result: "réussi", detail: `code ${w.auto ? "récupéré dans la boîte mail et saisi par Sésame" : "saisi par l'utilisateur"} (${w.elapsedSec} s) → ${publicUrl(page.url())}` });
     touchLastUsed(site.key);
-    return { ok: true, message: `Code saisi par l'utilisateur, connexion poursuivie sur « ${site.key} ».`, url: publicUrl(page.url()), title: await page.title().catch(() => ""), secondFactor: { pending: false, ...sf }, steps: steps.length ? steps : undefined };
+    return withOutcome({ ok: true, message: w.auto ? `Code récupéré dans la boîte mail et saisi par Sésame, connexion poursuivie sur « ${site.key} ».` : `Code saisi par l'utilisateur, connexion poursuivie sur « ${site.key} ».`, url: publicUrl(page.url()), title: await page.title().catch(() => ""), secondFactor: { pending: false, ...sf }, steps: steps.length ? steps : undefined }, "ok.code_accepted");
   } catch (e) {
     const msg = sanitize(e.message);
     logEvent({ ...base, result: "erreur", detail: msg });
-    return { ok: false, message: msg, steps: steps.length ? steps : undefined };
+    return withOutcome({ ok: false, message: msg, steps: steps.length ? steps : undefined }, codeForError(e));
   } finally {
     await browser?.close().catch(() => {});
   }

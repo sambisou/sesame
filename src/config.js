@@ -56,9 +56,16 @@ export function loadSites() {
 
 export function saveSites(sites) {
   ensureHome();
-  const tmp = SITES_FILE + ".tmp";
-  fs.writeFileSync(tmp, JSON.stringify(sites, null, 2) + "\n", { mode: 0o600 });
-  fs.renameSync(tmp, SITES_FILE);
+  // Nom temporaire unique : plusieurs serveurs MCP Sésame (Claude Code, Cowork, app) peuvent écrire en même
+  // temps (touchLastUsed à chaque sonde vivante) — le même `.tmp` partagé se tronquait avant le rename.
+  const tmp = `${SITES_FILE}.${process.pid}.${Date.now()}.tmp`;
+  try {
+    fs.writeFileSync(tmp, JSON.stringify(sites, null, 2) + "\n", { mode: 0o600 });
+    fs.renameSync(tmp, SITES_FILE);
+  } catch (e) {
+    try { fs.rmSync(tmp, { force: true }); } catch {}
+    throw e;
+  }
 }
 
 export function getSite(name) {

@@ -78,7 +78,7 @@ try {
   failed = e;
 } finally {
   try { kc.deleteSecret("demo"); } catch {}
-  stopLaunchedChrome();
+  await stopLaunchedChrome();   // attendu : le filet « exit » n'est qu'un secours (bancs d'essai)
   srv.close();
   await new Promise(r => setTimeout(r, 1200));
   fs.rmSync(HOME, { recursive: true, force: true });

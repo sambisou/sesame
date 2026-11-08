@@ -7,8 +7,12 @@ import { hasSecret, keychainAvailable } from "./keychain.js";
 import { readJournal, logEvent } from "./journal.js";
 import { isLocked } from "./policy.js";
 import { login, openLogin, waitCode, requestSite, requestStatus } from "./login.js";
+import { siteState, checkLock, attemptsPerDay, attemptsToday } from "./state.js";
+import { withOutcome } from "./outcomes.js";
 
 const UNKNOWN_HINT = "Ce site n'est pas dans Sésame. N'envoie pas l'utilisateur dans un terminal : appelle sesame_request_site(site, url, reason) — une fenêtre Sésame s'ouvre sur son Mac pour qu'il saisisse ses identifiants, puis rappelle sesame_login. Si le site se connecte par Google, Apple, Microsoft ou GitHub (« Se connecter avec Google »), passe authProvider (google|apple|microsoft|github) et, si tu le sais, account (l'adresse e-mail du compte à choisir chez le fournisseur) : aucun mot de passe n'est alors demandé ni rangé, Sésame clique le bouton du fournisseur.";
+/** Phrase commune aux outils qui répondent avec un verdict lisible par machine (src/outcomes.js). */
+const OUTCOME_NOTE = " La réponse porte outcome (ok | pending | fail), code (cause précise, ex. ok.already_signed_in, fail.captcha, fail.rate_limited), retry (now | later | never | human : ce que tu peux faire) et actor (none | user | sesame | admin : qui doit agir) ; avec retry « human », le champ human dit le chemin à proposer à l'utilisateur ; avec fail.rate_limited, retryAfter dit quand réessayer. Un verdict pending répond ok:false.";
 /** Dernier filet : aucun message d'erreur ne doit jamais transporter une ligne de commande ou un JSON de secret. */
 export function scrub(msg) {
   let m = String(msg || "erreur inconnue").split("\n")[0];
@@ -22,9 +26,23 @@ async function guarded(fn) {
     return r;
   } catch (e) {
     const msg = scrub(e.message || e);
-    if (/Site inconnu/.test(msg)) return { ok: false, message: msg, hint: UNKNOWN_HINT };
-    return { ok: false, message: msg };
+    if (/Site inconnu/.test(msg)) return withOutcome({ ok: false, message: msg, hint: UNKNOWN_HINT }, "fail.unknown_site");
+    return withOutcome({ ok: false, message: msg }, "fail.unexpected");
   }
+}
+
+/** État de session d'un site pour sesame_list_sites (jamais de secret) : { session, lockedUntil, lockReason }. */
+function sessionInfo(key, site) {
+  try {
+    const s = siteState(key);
+    const lk = checkLock({ key, ...site });
+    return {
+      session: { state: s.state, since: s.since, lastProbe: s.lastProbe, lastLogin: s.lastLogin, lastCode: s.lastCode },
+      lockedUntil: lk.locked ? lk.until : null,
+      lockReason: lk.locked ? lk.reason : undefined,
+      attemptsToday: attemptsToday(key, s.failures), attemptsPerDay: attemptsPerDay(site),
+    };
+  } catch { return { session: { state: "unknown", since: null, lastProbe: null, lastLogin: null, lastCode: null }, lockedUntil: null }; }
 }
 
 const CALLER = process.env.SESAME_CALLER || process.argv[2] || "mcp";
@@ -37,7 +55,7 @@ export function buildServer(caller = CALLER) {
 
   server.tool(
     "sesame_list_sites",
-    "Liste les sites pour lesquels l'utilisateur a enregistré des identifiants dans Sésame (nom, domaine, politique d'accès, dernière utilisation). Un site connecté par un fournisseur d'identité porte authProvider (google|apple|microsoft|github) et account (compte à choisir) : il n'a aucun mot de passe, hasCredentials y vaut true et sesame_login clique le bouton du fournisseur. Ne révèle aucun secret. Appelle-le pour savoir quel nom de site utiliser avec sesame_login.",
+    "Liste les sites pour lesquels l'utilisateur a enregistré des identifiants dans Sésame (nom, domaine, politique d'accès, dernière utilisation). Un site connecté par un fournisseur d'identité porte authProvider (google|apple|microsoft|github) et account (compte à choisir) : il n'a aucun mot de passe, hasCredentials y vaut true et sesame_login clique le bouton du fournisseur. Chaque site porte aussi session { state (alive | dead | unknown | blocked), since, lastProbe, lastLogin, lastCode } — l'état connu de sa session dans le Chrome Sésame — et lockedUntil (date ISO, ou null) : quand il est posé, Sésame refuse sesame_login (fail.rate_limited) jusqu'à cette date après un captcha ou un mot de passe refusé ; propose alors sesame_open_login à l'utilisateur. Ne révèle aucun secret. Appelle-le pour savoir quel nom de site utiliser avec sesame_login.",
     {},
     async () => {
       const sites = loadSites();
@@ -48,6 +66,7 @@ export function buildServer(caller = CALLER) {
         hasCredentials: isProviderSite(s) ? true : keychainAvailable() ? hasSecret(key) : null,
         viaProvider: isProviderSite(s) ? s.authProvider : undefined,
         lastUsed: s.lastUsed || null, note: s.note || undefined,
+        ...sessionInfo(key, s),
       }));
       return text({ locked: isLocked(), sites: list });
     }
@@ -55,7 +74,7 @@ export function buildServer(caller = CALLER) {
 
   server.tool(
     "sesame_login",
-    "Demande à Sésame de remplir (et par défaut soumettre) le formulaire de connexion d'un site dans l'onglet Chrome de l'utilisateur. Sésame lit les identifiants dans le Trousseau macOS et les tape lui-même : tu ne les vois jamais. Selon la politique du site, l'utilisateur devra valider une boîte de dialogue sur son Mac. Si le site demande ensuite un code (SMS, e-mail, application), Sésame prévient l'utilisateur, attend qu'il le saisisse lui-même dans Chrome, et ne rend la main qu'une fois le code accepté (ou le délai écoulé : alors appelle sesame_wait_code). Si le site se connecte par un fournisseur d'identité (« Sign in with Google » ; site déclaré avec authProvider, sans aucun secret), Sésame clique ce bouton, clique aussi (sans rien taper) la tuile du compte déclaré (account) si le fournisseur affiche un sélecteur de comptes, et laisse la session déjà ouverte dans son navigateur terminer ; il ne saisit JAMAIS d'identifiant chez le fournisseur — si celui-ci demande un compte, un mot de passe ou un code, la réponse le dit (needsProvider) et c'est à l'utilisateur de terminer une fois. Un mot de passe refusé répond désormais ok:false, jamais un succès assorti d'un indice. Si la connexion bascule vers un autre domaine enregistrable pour le mot de passe (fournisseur d'identité séparé), Sésame propose à l'utilisateur d'autoriser ce domaine (apprentissage assisté, jamais automatique) puis reprend seul — pas besoin de rappeler cet outil. Chaque demande est journalisée. Utilise le nom exact renvoyé par sesame_list_sites. Fournis un motif court et honnête (reason) : il est affiché à l'utilisateur.",
+    "Demande à Sésame de remplir (et par défaut soumettre) le formulaire de connexion d'un site dans l'onglet Chrome de l'utilisateur. Sésame lit les identifiants dans le Trousseau macOS et les tape lui-même : tu ne les vois jamais. Selon la politique du site, l'utilisateur devra valider une boîte de dialogue sur son Mac. Si le site demande ensuite un code (SMS, e-mail, application), Sésame prévient l'utilisateur, attend qu'il le saisisse lui-même dans Chrome, et ne rend la main qu'une fois le code accepté (ou le délai écoulé : alors appelle sesame_wait_code). Si le site se connecte par un fournisseur d'identité (« Sign in with Google » ; site déclaré avec authProvider, sans aucun secret), Sésame clique ce bouton, clique aussi (sans rien taper) la tuile du compte déclaré (account) si le fournisseur affiche un sélecteur de comptes, et laisse la session déjà ouverte dans son navigateur terminer ; il ne saisit JAMAIS d'identifiant chez le fournisseur — si celui-ci demande un compte, un mot de passe ou un code, la réponse le dit (needsProvider) et c'est à l'utilisateur de terminer une fois. Un mot de passe refusé répond désormais ok:false, jamais un succès assorti d'un indice. Si la connexion bascule vers un autre domaine enregistrable pour le mot de passe (fournisseur d'identité séparé), Sésame propose à l'utilisateur d'autoriser ce domaine (apprentissage assisté, jamais automatique) puis reprend seul — pas besoin de rappeler cet outil. Avant de remplir quoi que ce soit, Sésame SONDE la session dans le Chrome Sésame : si elle est encore ouverte, il répond ok.already_signed_in (probe:true) sans lire aucun identifiant ni déranger l'utilisateur. Après un captcha ou un mot de passe refusé, Sésame n'insiste pas (verrou d'essais : fail.rate_limited avec retryAfter et human) — ne rappelle pas cet outil en boucle, propose le chemin humain. Chaque demande est journalisée. Utilise le nom exact renvoyé par sesame_list_sites. Fournis un motif court et honnête (reason) : il est affiché à l'utilisateur." + OUTCOME_NOTE,
     {
       site: z.string().describe("Nom du site tel que listé par sesame_list_sites (ex. « edf »)"),
       reason: z.string().max(200).optional().describe("Pourquoi tu as besoin de te connecter (affiché à l'utilisateur)"),
@@ -67,7 +86,7 @@ export function buildServer(caller = CALLER) {
       text(await guarded(async () => {
         // Toujours soumettre : un formulaire laissé rempli sans soumission exposerait le mot de passe dans la page.
         const r = await login({ site, reason, submit: true, openIfMissing, waitForCode, codeTimeoutSec, caller });
-        if (!r.ok && /Aucun identifiant enregistré/.test(r.message || "")) r.hint = UNKNOWN_HINT;
+        if (!r.ok && (r.code === "fail.no_secret" || /Aucun identifiant enregistré/.test(r.message || ""))) r.hint = UNKNOWN_HINT;
         return r;
       }))
   );
@@ -97,7 +116,7 @@ export function buildServer(caller = CALLER) {
 
   server.tool(
     "sesame_wait_code",
-    "Reprend l'attente du code (2e facteur) sur l'onglet du site : Sésame prévient l'utilisateur, attend qu'il tape le code reçu par e-mail, SMS ou application dans le Chrome Sésame, et répond quand le site l'a accepté. À appeler quand sesame_login a signalé un code non saisi dans le délai. Ne remplit rien, ne voit jamais le code.",
+    "Reprend l'attente du code (2e facteur) sur l'onglet du site : Sésame prévient l'utilisateur, attend qu'il tape le code reçu par e-mail, SMS ou application dans le Chrome Sésame (ou le prend lui-même dans une boîte mail déclarée), et répond quand le site l'a accepté (ok.code_accepted). À appeler quand sesame_login a signalé un code non saisi dans le délai (pending.second_factor). Si aucun code n'est attendu : ok.no_code_pending quand la page semble connectée, fail.form_still_visible quand c'est le formulaire identifiant/mot de passe qui est affiché (appelle alors sesame_login). Ne remplit rien, ne voit jamais le code." + OUTCOME_NOTE,
     {
       site: z.string().describe("Nom du site (voir sesame_list_sites)"),
       timeoutSec: z.number().int().min(10).max(900).optional().default(180).describe("Délai maximal d'attente, en secondes (défaut 180)"),
@@ -107,7 +126,7 @@ export function buildServer(caller = CALLER) {
 
   server.tool(
     "sesame_open_login",
-    "Ouvre (ou ramène au premier plan) la page de connexion d'un site dans le Chrome de l'utilisateur, sans rien remplir. Utile avant sesame_login si la page n'est pas encore ouverte.",
+    "Ouvre (ou ramène au premier plan) la page de connexion d'un site dans le Chrome Sésame, sans rien remplir. Utile avant sesame_login si la page n'est pas encore ouverte, et c'est le chemin humain quand sesame_login répond fail.rate_limited ou fail.captcha : l'utilisateur termine lui-même, puis sesame_wait_code si un code est demandé." + OUTCOME_NOTE,
     { site: z.string().describe("Nom du site (voir sesame_list_sites)") },
     async ({ site }) => text(await guarded(() => openLogin({ site, caller })))
   );

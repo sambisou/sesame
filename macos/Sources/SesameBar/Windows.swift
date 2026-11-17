@@ -78,10 +78,20 @@ final class Windows: NSObject, NSWindowDelegate {
         let mouse = NSEvent.mouseLocation
         let screen = NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) } ?? NSScreen.main ?? NSScreen.screens[0]
         let v = screen.visibleFrame
+        // La taille réelle du contenu SwiftUI n'est connue qu'après la mise en page : sans elle, la largeur
+        // est trop petite et la fenêtre déborde à droite (17/11/2026, demande d'accord invisible).
+        w.contentViewController?.view.layoutSubtreeIfNeeded()
+        if let fit = w.contentViewController?.view.fittingSize, fit.width > 0, fit.height > 0 {
+            w.setContentSize(fit)
+        }
+        w.layoutIfNeeded()
         let size = w.frame.size
         let step = CGFloat(min(index, 6)) * 28
-        let x = v.maxX - size.width - 16 - step
-        let y = v.maxY - size.height - 12 - step
+        var x = v.maxX - size.width - 16 - step
+        var y = v.maxY - size.height - 12 - step
+        // Bornage final : toute la fenêtre reste dans la zone visible (sous la barre des menus, hors Dock).
+        x = min(x, v.maxX - size.width - 8)
+        y = min(y, v.maxY - size.height - 8)
         w.setFrameOrigin(NSPoint(x: max(v.minX + 8, x), y: max(v.minY + 8, y)))
     }
 

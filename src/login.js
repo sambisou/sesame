@@ -18,6 +18,40 @@ export const FALLBACK_STEP = "extension injoignable, repli sur le Chrome Sésame
 export const UNSURE_MESSAGE = "L'extension Sésame n'a pas répondu : le formulaire a peut-être été rempli et soumis. Vérifie l'onglet dans ton Chrome habituel. Aucun repli sur le Chrome Sésame (les identifiants ne seront pas saisis deux fois).";
 
 /**
+ * Le délai d'accord (90 s) dépasse le délai d'appel du client MCP, qui répondrait « Request timed out » sans
+ * explication. Avant ce délai, la connexion rend donc `pending` ; la fenêtre d'accord reste ouverte, et le
+ * rappel de sesame_login rejoint la même question (jamais une seconde fenêtre). Une réponse (accord ou refus)
+ * arrivée entre-temps est gardée 3 minutes pour le rappel suivant ; un silence est rendu tel quel.
+ */
+export const PENDING_ACCESS_MESSAGE = "Demande d'accord affichée sur le Mac de l'utilisateur : en attente de sa réponse. Rappelle sesame_login dans quelques secondes (la même fenêtre attend, aucune nouvelle ne s'ouvre) ; ne conclus pas à un échec.";
+const PENDING_AFTER_MS = () => (Number(process.env.SESAME_PENDING_SEC) || 40) * 1000;
+const GRANT_TTL_MS = 3 * 60 * 1000;
+const askInflight = new Map();  // site → promesse de la réponse
+const askAnswered = new Map();  // site → { ans, until } : réponse arrivée après le retour `pending`
+
+export async function askSiteAccess(siteKey, o) {
+  const kept = askAnswered.get(siteKey);
+  if (kept) {
+    askAnswered.delete(siteKey);
+    if (kept.until > Date.now()) return kept.ans;
+  }
+  let p = askInflight.get(siteKey);
+  if (!p) {
+    p = askAccess(o).finally(() => askInflight.delete(siteKey));
+    askInflight.set(siteKey, p);
+    p.then(ans => { if (!ans.timedOut && !askAnswered.has(siteKey) && late.has(p)) askAnswered.set(siteKey, { ans, until: Date.now() + GRANT_TTL_MS }); }, () => {});
+  }
+  let timer;
+  const pending = new Promise(res => { timer = setTimeout(() => res({ pending: true }), PENDING_AFTER_MS()); });
+  const ans = await Promise.race([p, pending]);
+  clearTimeout(timer);
+  if (ans.pending) late.add(p);
+  else { late.delete(p); askAnswered.delete(siteKey); }
+  return ans;
+}
+const late = new WeakSet(); // questions déjà rendues en `pending` : leur réponse sera gardée pour le rappel
+
+/**
  * Apprentissage assisté (jamais d'ajout automatique) : le remplissage vient d'être abandonné parce que
  * l'onglet est parti sur `domain` pour le mot de passe (fillLogin / l'extension l'ont détecté). On demande
  * à l'utilisateur, par une boîte de dialogue macOS, s'il autorise ce domaine pour ce site. Si oui :
@@ -245,7 +279,7 @@ async function doLogin(site, { submit = true, openIfMissing = true, caller = "mc
 
     if (site.policy === "ask") {
       const viaBar = barAlive();
-      const ans = await askAccess({
+      const ans = await askSiteAccess(site.key, {
         kind: "access", site: site.key, domain: site.domain, caller, reason: reason || "", channel: channelLabel(channel), offerAlways: true,
         title: t("dlg_access_title"),
         message: t("dlg_access_message", {
@@ -254,6 +288,10 @@ async function doLogin(site, { submit = true, openIfMissing = true, caller = "mc
           channel: channelLabel(channel),
         }),
       });
+      if (ans.pending) {
+        logEvent({ ...base, result: "en attente", detail: "demande d'accord affichée sur le Mac, réponse non arrivée avant le délai de l'appel" });
+        return withOutcome({ ok: false, pending: true, message: PENDING_ACCESS_MESSAGE }, "pending.user_approval");
+      }
       if (!ans.allowed) {
         logEvent({ ...base, result: "refusé", detail: ans.timedOut ? "sans réponse de l'utilisateur (délai écoulé)" : "refusé par l'utilisateur" });
         return refused("fail.access_refused", ans.timedOut ? "L'utilisateur n'a pas répondu à la demande d'accès (délai écoulé)." : "L'utilisateur a refusé la demande d'accès.");

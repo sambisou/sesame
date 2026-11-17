@@ -19,7 +19,7 @@ export const OUTCOMES = Object.freeze({
   // --- en attente de quelqu'un ---------------------------------------------------------------------
   "pending.second_factor":          { outcome: "pending", retry: "now", actor: "user" },   // code attendu, délai écoulé (actor: sesame si une boîte mail est configurée)
   "pending.second_factor_no_field": { outcome: "pending", retry: "now", actor: "user" },   // la page parle d'un code sans champ (choix de méthode, téléphone)
-  "pending.user_approval":          { outcome: "pending", retry: "now", actor: "user" },   // réservé à l'atelier (Face ID) ; non émis ici
+  "pending.user_approval":          { outcome: "pending", retry: "now", actor: "user" },   // accord demandé, pas encore donné : fenêtre d'accord du Mac (sesame_login la rejoint au rappel), Face ID sur l'atelier
   // --- échecs ------------------------------------------------------------------------------------
   "fail.password_rejected":    { outcome: "fail", retry: "never", actor: "admin" },  // message d'erreur du site après soumission
   "fail.captcha":              { outcome: "fail", retry: "human", actor: "user" },   // captcha / vérification humaine

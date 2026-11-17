@@ -40,7 +40,7 @@ Table des codes (exhaustive pour cette tranche ; en ajouter plutôt que détourn
 | `ok.no_code_pending` | ok | never | none | `waitCode` : ni code, ni formulaire ; la page semble connectée (`confidence` selon `looksSignedIn`) |
 | `pending.second_factor` | pending | now | user ou sesame | code attendu, délai écoulé ; `actor: sesame` si une boîte mail est configurée (il réessaiera), `user` sinon |
 | `pending.second_factor_no_field` | pending | now | user | la page parle d'un code sans champ (choix de méthode, validation sur téléphone) |
-| `pending.user_approval` | pending | now | user | réservé à l'atelier (Face ID) ; non émis par ce dépôt, documenté pour cohérence |
+| `pending.user_approval` | pending | now | user | accord demandé, pas encore donné : fenêtre d'accord du Mac après 40 s sans réponse (rappeler `sesame_login`, la même fenêtre attend) ; Face ID sur l'atelier |
 | `fail.password_rejected` | fail | never | admin | message d'erreur du site vu après soumission (mot de passe/identifiant refusé, compte verrouillé) |
 | `fail.captcha` | fail | human | user | captcha ou vérification humaine détecté (avant ou après soumission) |
 | `fail.form_unchanged` | fail | later | none | champ mot de passe encore là après soumission, sans message d'erreur ni captcha |

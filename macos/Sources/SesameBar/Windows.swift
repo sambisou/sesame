@@ -27,6 +27,8 @@ final class Windows: NSObject, NSWindowDelegate {
     static let shared = Windows()
     private var open: [String: NSWindow] = [:]
     private var onClose: [String: () -> Void] = [:]
+    /// Fenêtres d'accord : coin haut droit visé et zone visible de l'écran, pour les recaler si leur taille change.
+    private var askAnchor: [ObjectIdentifier: (NSPoint, NSRect)] = [:]
 
     func showRequest(_ r: SiteRequest, store: Store) {
         show(key: "req-" + r.id, title: "Sésame — \(r.site)", store: store, request: r) { saved in
@@ -78,21 +80,30 @@ final class Windows: NSObject, NSWindowDelegate {
         let mouse = NSEvent.mouseLocation
         let screen = NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) } ?? NSScreen.main ?? NSScreen.screens[0]
         let v = screen.visibleFrame
-        // La taille réelle du contenu SwiftUI n'est connue qu'après la mise en page : sans elle, la largeur
-        // est trop petite et la fenêtre déborde à droite (17/11/2026, demande d'accord invisible).
-        w.contentViewController?.view.layoutSubtreeIfNeeded()
-        if let fit = w.contentViewController?.view.fittingSize, fit.width > 0, fit.height > 0 {
-            w.setContentSize(fit)
-        }
-        w.layoutIfNeeded()
-        let size = w.frame.size
+        // Le coin haut droit visé est retenu : la taille du contenu SwiftUI n'est sûre ni avant la mise en page
+        // (trop petite : la fenêtre débordait à droite, demande d'accord invisible le 17/11/2026) ni juste après
+        // (fittingSize trop grande : la fenêtre se resserrait ensuite et s'éloignait du coin). À chaque
+        // changement de taille, `pin` la recale sur ce coin, bornée dans la zone visible.
         let step = CGFloat(min(index, 6)) * 28
-        var x = v.maxX - size.width - 16 - step
-        var y = v.maxY - size.height - 12 - step
-        // Bornage final : toute la fenêtre reste dans la zone visible (sous la barre des menus, hors Dock).
-        x = min(x, v.maxX - size.width - 8)
-        y = min(y, v.maxY - size.height - 8)
-        w.setFrameOrigin(NSPoint(x: max(v.minX + 8, x), y: max(v.minY + 8, y)))
+        askAnchor[ObjectIdentifier(w)] = (NSPoint(x: v.maxX - 16 - step, y: v.maxY - 12 - step), v)
+        w.contentViewController?.view.layoutSubtreeIfNeeded()
+        w.layoutIfNeeded()
+        pin(w)
+    }
+
+    /// Recale une fenêtre d'accord sur son coin haut droit, toute entière dans la zone visible de son écran
+    /// (sous la barre des menus, hors Dock).
+    private func pin(_ w: NSWindow) {
+        guard let (corner, v) = askAnchor[ObjectIdentifier(w)] else { return }
+        let size = w.frame.size
+        let x = max(v.minX + 8, min(corner.x - size.width, v.maxX - size.width - 8))
+        let y = max(v.minY + 8, min(corner.y - size.height, v.maxY - size.height - 8))
+        let o = w.frame.origin
+        if abs(o.x - x) > 0.5 || abs(o.y - y) > 0.5 { w.setFrameOrigin(NSPoint(x: x, y: y)) }
+    }
+
+    func windowDidResize(_ notification: Notification) {
+        if let w = notification.object as? NSWindow { pin(w) }
     }
 
     func showAdd(store: Store) {
@@ -178,6 +189,7 @@ final class Windows: NSObject, NSWindowDelegate {
     private func close(_ key: String) {
         guard let w = open.removeValue(forKey: key) else { return }
         onClose.removeValue(forKey: key)
+        askAnchor.removeValue(forKey: ObjectIdentifier(w))
         w.delegate = nil
         w.close()
     }
@@ -187,6 +199,7 @@ final class Windows: NSObject, NSWindowDelegate {
         guard let w = notification.object as? NSWindow, let key = open.first(where: { $0.value === w })?.key else { return }
         open.removeValue(forKey: key)
         let cb = onClose.removeValue(forKey: key)
+        askAnchor.removeValue(forKey: ObjectIdentifier(w))
         w.delegate = nil
         cb?()
     }

@@ -50,6 +50,8 @@ export async function askSiteAccess(siteKey, o) {
   return ans;
 }
 const late = new WeakSet(); // questions déjà rendues en `pending` : leur réponse sera gardée pour le rappel
+/** Une demande d'accord est-elle ouverte (ou sa réponse gardée) pour ce site ? Le rappel doit alors la rejoindre d'abord. */
+export const askWaiting = siteKey => askInflight.has(siteKey) || (askAnswered.get(siteKey)?.until || 0) > Date.now();
 
 /**
  * Apprentissage assisté (jamais d'ajout automatique) : le remplissage vient d'être abandonné parce que
@@ -270,7 +272,9 @@ async function doLogin(site, { submit = true, openIfMissing = true, caller = "mc
   try {
     // Sonde AVANT la demande d'accès et AVANT toute lecture de secret : si la session est vivante, on ne
     // dérange personne et on ne lit rien. Sur le canal Chrome Sésame seulement (l'extension ne sonde pas).
-    if (channel === "chrome-profile" && probeEnabled) {
+    // Sauf si une demande d'accord est déjà à l'écran pour ce site (rappel après `pending.user_approval`) :
+    // le rappel la rejoint d'abord, sinon une sonde « vivante » répondrait en laissant la fenêtre ouverte.
+    if (channel === "chrome-profile" && probeEnabled && !askWaiting(site.key)) {
       logEvent({ ...base, result: "étape", detail: "connexion au Chrome Sésame — sonde de session" });
       browser = await connectChrome();
       const early = await runProbe();

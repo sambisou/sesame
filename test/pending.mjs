@@ -8,7 +8,7 @@ import assert from "node:assert/strict";
 process.env.SESAME_HOME = fs.mkdtempSync(path.join(os.tmpdir(), "sesame-test-"));
 process.env.SESAME_KEYCHAIN_SERVICE = "sesame-test-" + process.pid;
 process.env.SESAME_PENDING_SEC = "1";
-const { askSiteAccess, PENDING_ACCESS_MESSAGE } = await import("../src/login.js");
+const { askSiteAccess, askWaiting, PENDING_ACCESS_MESSAGE } = await import("../src/login.js");
 assert.match(PENDING_ACCESS_MESSAGE, /affichée sur le Mac/);
 
 const asks = path.join(process.env.SESAME_HOME, "asks");
@@ -23,6 +23,8 @@ if (process.platform === "darwin") {
   const a = await askSiteAccess("edf", q);
   assert.equal(a.pending, true);
   assert.equal(files().length, 1);
+  assert.equal(askWaiting("edf"), true, "le rappel saura qu'une fenêtre attend (pas de sonde avant de la rejoindre)");
+  assert.equal(askWaiting("autre"), false);
   // 2) Rappel : rejoint la même question, aucune seconde fenêtre.
   const second = askSiteAccess("edf", q);
   await sleep(200);
@@ -41,6 +43,7 @@ if (process.platform === "darwin") {
   const d = await askSiteAccess("edf", q);
   assert.equal(d.allowed, true);
   assert.equal(files().length, 0, "l'accord gardé évite une nouvelle fenêtre");
+  assert.equal(askWaiting("edf"), false, "plus rien n'attend une fois la réponse rendue");
   // 5) L'accord gardé n'est valable qu'une fois.
   const e = await askSiteAccess("edf", { ...q, timeoutSec: 30 });
   assert.equal(e.pending, true);
